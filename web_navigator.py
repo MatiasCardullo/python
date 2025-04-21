@@ -1,36 +1,55 @@
 import sys
-import argparse
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtCore import QUrl
+from PyQt5.QtCore import QUrl, QTimer
 
-def open_browser(query: str, engine: str = "google"):
-    """Open a mini-browser with the given query in the selected search engine."""
+# --------- Modo de automatización basado en el query ---------
+def detect_mode(query: str) -> str:
+    q = query.lower()
+    if q.startswith("definir ") or "significado de" in q:
+        return "wikipedia"
+    # Aquí se pueden agregar más comandos
+    return "default"
+
+# --------- Generar URL de búsqueda según modo ---------
+def generate_search_url(query: str, mode: str) -> str:
+    if mode == "wikipedia":
+        term = query.lower().replace("definir", "").strip()
+        return f"https://es.wikipedia.org/wiki/{term.replace(' ', '_')}"
+    return f"https://www.google.com/search?q={query}"
+
+# --------- Función principal ---------
+def main(query: str):
+    mode = detect_mode(query)
+    search_url = generate_search_url(query, mode)
+
     app = QApplication(sys.argv)
-    web = QWebEngineView()
+    browser = QWebEngineView()
+    browser.setWindowTitle("Assistant Browser")
+    browser.resize(1000, 800)
+    browser.show()
 
-    if engine == "google":
-        url = f"https://www.google.com/search?q={query}"
-    elif engine == "bing":
-        url = f"https://www.bing.com/search?q={query}"
-    elif engine == "duckduckgo":
-        url = f"https://duckduckgo.com/?q={query}"
-    else:
-        url = f"https://www.google.com/search?q={query}"
+    print(f"[INFO] Cargando: {search_url}")
+    browser.load(QUrl(search_url))
 
-    web.load(QUrl(url))
-    web.setWindowTitle(f"Searching: {query}")
-    web.resize(1024, 768)
-    web.show()
+    # Automatización después de cargar la página
+    def on_load_finished():
+        match mode:
+            case "wikipedia":
+                # Nada extra, ya cargamos el artículo directamente
+                print("[INFO] Modo Wikipedia: artículo cargado.")
+            case _:
+                print("[INFO] Modo por defecto, no hay automatización.")
+
+    # Conectar evento de página cargada
+    browser.loadFinished.connect(on_load_finished)
 
     sys.exit(app.exec_())
 
-def main():
-    parser = argparse.ArgumentParser(description="Open a browser window and search the internet.")
-    parser.add_argument("query", help="Search query string")
-    parser.add_argument("--engine", choices=["google", "bing", "duckduckgo"], default="google", help="Search engine to use")
-    args = parser.parse_args()
-    open_browser(args.query, args.engine)
-
+# --------- Entrada por línea de comandos ---------
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) < 2:
+        print("Uso: python web_navigator.py 'tu consulta'")
+        sys.exit(1)
+    user_query = " ".join(sys.argv[1:])
+    main(user_query)
