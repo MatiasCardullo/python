@@ -1,65 +1,43 @@
 import sys
+import webbrowser
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import QUrl, QTimer
+from site_selector import detect_special_site
+from datetime import datetime
 
-def detect_mode(query: str) -> str:
-    q = query.lower()
-    if q.startswith("definir ") or "significado de" in q:
-        return "wikipedia"
-    elif "video reciente de" in q or "último video de" in q:
-        return "youtube_latest"
-    return "default"
+HISTORY_PATH = "history.txt"
 
-# --------- Generar URL de búsqueda según modo ---------
-def generate_search_url(query: str, mode: str) -> str:
-    if mode == "wikipedia":
-        term = query.lower().replace("definir", "").replace("significado de", "").strip()
-        return f"https://es.wikipedia.org/wiki/{term.replace(' ', '_')}"
-    elif mode == "youtube_latest":
-        channel = query.lower().replace("ver el video reciente de", "").replace("último video de", "").strip()
-        return f"https://www.youtube.com/results?search_query={channel}"
-    return f"https://www.google.com/search?q={query}"
+def log_history(entry: str):
+    with open(HISTORY_PATH, "a", encoding="utf-8") as f:
+        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+        f.write(f"{timestamp} {entry}\n")
 
-def main(query: str):
-    mode = detect_mode(query)
-    search_url = generate_search_url(query, mode)
-
+def open_webpage(url: str):
     app = QApplication(sys.argv)
     browser = QWebEngineView()
     browser.setWindowTitle("Assistant Browser")
     browser.resize(1000, 800)
     browser.show()
-    print(f"[INFO] Cargando: {search_url}")
     browser.load(QUrl(search_url))
 
-    # Automatización después de cargar la página
-    def on_load_finished():
-        match mode:
-            case "wikipedia":
-                print("[INFO] Modo Wikipedia: artículo cargado.")
-
-            case "youtube_latest":
-                print("[INFO] Modo YouTube: buscando video más reciente.")
-                js = """
-                    (function() {
-                        let firstResult = document.querySelector('a#video-title');
-                        if (firstResult) {
-                            firstResult.click();
-                        }
-                    })();
-                """
-                QTimer.singleShot(2000, lambda: browser.page().runJavaScript(js))
-
-            case _:
-
-    # Conectar evento de página cargada
-    browser.loadFinished.connect(on_load_finished)
+    log_history(f"Opened URL: {url}")
     sys.exit(app.exec_())
 
+def smart_search(query: str):
+    special_site = detect_special_site(query)
+
+    if special_site:
+        log_history(f"Detected specialized topic: {query} -> {special_site}")
+        open_webpage(special_site)
+    else:
+        search_url = f"https://www.google.com/search?q={query}"
+        log_history(f"Performed Google search: {query}")
+        open_webpage(search_url)
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    if len(sys.argv) > 1:
+        search_query = " ".join(sys.argv[1:])
+        smart_search(search_query)
+    else:
         print("Uso: python web_navigator.py 'tu consulta'")
-        sys.exit(1)
-    user_query = " ".join(sys.argv[1:])
-    main(user_query)
