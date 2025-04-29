@@ -1,185 +1,182 @@
 import sys
 import math
+from calculator import solve_expression
 from datetime import datetime
 
-HISTORIAL_PATH = "historial.txt"
+HISTORY_PATH = "history.txt"
 
-# --------------------- Conversión de argumentos ---------------------
+# --------------------- Calculation functions ---------------------
 
-def convertir_argumentos(args, tipos):
-    convertidos = []
-    for arg, tipo in zip(args, tipos):
+def area(shape, *args):
+    result = None
+    steps = ""
+
+    if shape == "circle":
+        r = float(args[0])
+        result = math.pi * r ** 2
+        steps = f"Circle area: π × r² = π × {r}² = {result:.5f}"
+
+    elif shape == "rectangle":
+        b, h = map(float, args)
+        result = b * h
+        steps = f"Rectangle area: base × height = {b} × {h} = {result:.5f}"
+
+    elif shape == "triangle":
+        a, h = map(float, args)
+        result = (a * h) / 2
+        steps = f"Triangle area: (base × height) / 2 = ({a} × {h}) / 2 = {result:.5f}"
+
+    elif shape == "regular_polygon":
+        n = int(args[0])
+        l = float(args[1])
+        perimeter = n * l
+        apothem_expr = f"{l} / (2 * tan(pi / {n}))"
+        apothem = solve_with_calculator(apothem_expr)
         try:
-            if tipo == int:
-                convertidos.append(int(arg))
-            else:
-                convertidos.append(float(arg))
-        except ValueError:
-            raise ValueError(f"El valor '{arg}' no se puede convertir a {tipo.__name__}")
-    return convertidos
+            apothem_val = float(apothem.split('=')[-1].strip())
+        except:
+            apothem_val = 0
+        result = (perimeter * apothem_val) / 2
+        steps = (f"Regular polygon area (n={n}, l={l}):\n"
+                 f"Step 1: perimeter = n × l = {n} × {l} = {perimeter:.5f}\n"
+                 f"Step 2: apothem = {apothem_expr} = {apothem}\n"
+                 f"Step 3: area = (perimeter × apothem) / 2 = ({perimeter:.5f} × {apothem_val:.5f}) / 2 = {result:.5f}")
 
-# --------------------- Funciones de cálculo ---------------------
-
-def area(figura, args):
-    if figura == "circulo":
-        r, = convertir_argumentos(args, [float])
-        resultado = math.pi * r ** 2
-        pasos = f"Área del círculo: π × {r}² = {resultado:.5f}"
-
-    elif figura == "rectangulo":
-        b, h = convertir_argumentos(args, [float, float])
-        resultado = b * h
-        pasos = f"Área del rectángulo: {b} × {h} = {resultado:.5f}"
-
-    elif figura == "triangulo":
-        a, h = convertir_argumentos(args, [float, float])
-        resultado = (a * h) / 2
-        pasos = f"Área del triángulo: ({a} × {h}) / 2 = {resultado:.5f}"
-
-    elif figura == "poligono_regular":
-        n, l = convertir_argumentos(args, [int, float])
-        perimetro = n * l
-        apotema = l / (2 * math.tan(math.pi / n))
-        resultado = (perimetro * apotema) / 2
-        pasos = (f"Área del polígono regular:\n"
-                 f"  perímetro = {n} × {l} = {perimetro:.5f}\n"
-                 f"  apotema = {l} / (2 × tan(π / {n})) = {apotema:.5f}\n"
-                 f"  área = ({perimetro:.5f} × {apotema:.5f}) / 2 = {resultado:.5f}")
-    else:
-        raise ValueError(f"Figura desconocida: '{figura}'")
-
-    registrar_en_historial("area", figura, pasos)
-    print(pasos)
-    return resultado
+    if result is not None:
+        log_history("area", shape, steps)
+        print(steps)
+        return result
 
 
-def per(figura, args):
-    if figura == "circulo":
-        r, = convertir_argumentos(args, [float])
-        resultado = 2 * math.pi * r
-        pasos = f"Perímetro del círculo: 2π × {r} = {resultado:.5f}"
+def perimeter(shape, *args):
+    result = None
+    steps = ""
 
-    elif figura == "rectangulo":
-        b, h = convertir_argumentos(args, [float, float])
-        resultado = 2 * (b + h)
-        pasos = f"Perímetro del rectángulo: 2 × ({b} + {h}) = {resultado:.5f}"
+    if shape == "circle":
+        r = float(args[0])
+        result = 2 * math.pi * r
+        steps = f"Circle perimeter: 2π × r = 2π × {r} = {result:.5f}"
 
-    elif figura == "triangulo":
-        a, b, c = convertir_argumentos(args, [float, float, float])
-        resultado = a + b + c
-        pasos = f"Perímetro del triángulo: {a} + {b} + {c} = {resultado:.5f}"
+    elif shape == "rectangle":
+        b, h = map(float, args)
+        result = 2 * (b + h)
+        steps = f"Rectangle perimeter: 2 × (b + h) = 2 × ({b} + {h}) = {result:.5f}"
 
-    elif figura == "poligono_regular":
-        n, l = convertir_argumentos(args, [int, float])
-        resultado = n * l
-        pasos = f"Perímetro del polígono regular: {n} × {l} = {resultado:.5f}"
-    else:
-        raise ValueError(f"Figura desconocida: '{figura}'")
+    elif shape == "triangle":
+        a, b, c = map(float, args)
+        result = a + b + c
+        steps = f"Triangle perimeter: a + b + c = {a} + {b} + {c} = {result:.5f}"
 
-    registrar_en_historial("per", figura, pasos)
-    print(pasos)
-    return resultado
+    elif shape == "regular_polygon":
+        n = int(args[0])
+        l = float(args[1])
+        result = n * l
+        steps = f"Regular polygon perimeter: n × l = {n} × {l} = {result:.5f}"
+
+    if result is not None:
+        log_history("perimeter", shape, steps)
+        print(steps)
+        return result
 
 
-def vol(figura, args):
-    if figura == "cubo":
-        l, = convertir_argumentos(args, [float])
-        resultado = l ** 3
-        pasos = f"Volumen del cubo: {l}³ = {resultado:.5f}"
+def volume(shape, *args):
+    result = None
+    steps = ""
 
-    elif figura == "cilindro":
-        r, h = convertir_argumentos(args, [float, float])
-        resultado = math.pi * r ** 2 * h
-        pasos = f"Volumen del cilindro: π × {r}² × {h} = {resultado:.5f}"
+    if shape == "cube":
+        l = float(args[0])
+        result = l ** 3
+        steps = f"Cube volume: l³ = {l}³ = {result:.5f}"
 
-    elif figura == "esfera":
-        r, = convertir_argumentos(args, [float])
-        resultado = (4/3) * math.pi * r ** 3
-        pasos = f"Volumen de la esfera: (4/3)π × {r}³ = {resultado:.5f}"
+    elif shape == "cylinder":
+        r, h = map(float, args)
+        result = math.pi * r ** 2 * h
+        steps = f"Cylinder volume: π × r² × h = π × {r}² × {h} = {result:.5f}"
 
-    elif figura == "dodecaedro":
-        l, = convertir_argumentos(args, [float])
-        resultado = ((15 + 7 * math.sqrt(5)) / 4) * (l ** 3)
-        pasos = f"Volumen del dodecaedro: ((15 + 7√5)/4) × {l}³ = {resultado:.5f}"
+    elif shape == "sphere":
+        r = float(args[0])
+        result = (4/3) * math.pi * r ** 3
+        steps = f"Sphere volume: (4/3)π × r³ = (4/3)π × {r}³ = {result:.5f}"
 
-    elif figura == "icosaedro":
-        l, = convertir_argumentos(args, [float])
-        resultado = (5 * (3 + math.sqrt(5)) / 12) * (l ** 3)
-        pasos = f"Volumen del icosaedro: (5(3 + √5)/12) × {l}³ = {resultado:.5f}"
-    else:
-        raise ValueError(f"Figura desconocida: '{figura}'")
+    elif shape == "dodecahedron":
+        l = float(args[0])
+        expr = f"((15 + 7 * sqrt(5)) / 4) * ({l} ** 3)"
+        steps = f"Dodecahedron volume expression: {expr}"
+        result = solve_with_calculator(expr)
+        steps += f"\nResult: {result}"
 
-    registrar_en_historial("vol", figura, pasos)
-    print(pasos)
-    return resultado
+    elif shape == "icosahedron":
+        l = float(args[0])
+        expr = f"(5 * (3 + sqrt(5)) / 12) * ({l} ** 3)"
+        steps = f"Icosahedron volume expression: {expr}"
+        result = solve_with_calculator(expr)
+        steps += f"\nResult: {result}"
 
-# --------------------- Registro e historial ---------------------
+    if result is not None:
+        log_history("volume", shape, steps)
+        print(steps)
+        return result
 
-def registrar_en_historial(tipo, figura, texto):
+# --------------------- History log ---------------------
+
+def log_history(kind, shape, text):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(HISTORIAL_PATH, "a", encoding="utf-8") as f:
-        f.write(f"[{now}] {tipo}({figura})\n{textwrap(texto)}\n\n")
+    with open(HISTORY_PATH, "a", encoding="utf-8") as f:
+        f.write(f"[{now}] {kind}({shape})\n{textwrap(text)}\n\n")
 
 def textwrap(text):
     return "\n".join([line.strip() for line in text.strip().splitlines()])
 
-# --------------------- Ayuda e interpretación ---------------------
 
-def mostrar_ayuda():
-    print("""
-Uso: python calculadora_geometria.py <operacion> <figura> <valores...>
+# --------------------- Expression solver ---------------------
 
-Operaciones disponibles:
-  area    - Cálculo de áreas
-  per     - Cálculo de perímetros
-  vol     - Cálculo de volúmenes
+def solve_with_calculator(expression):
+    try:
+        result_value = solve_expression(expression, log=True)
+        return f"{expression} = {result_value}"
+    except Exception as e:
+        print(f"[solve_with_calculator error] {e}")
+        return "Error: could not resolve expression."
 
-Figuras válidas:
-  Área: "circulo", "rectangulo", "triangulo", "poligono_regular"
-  Perímetro: igual a área
-  Volumen: "cubo", "cilindro", "esfera", "dodecaedro", "icosaedro"
+# --------------------- Console input handler ---------------------
 
-Ejemplos:
-  python calculadora_geometria.py area circulo 5
-  python calculadora_geometria.py per triangulo 3 4 5
-  python calculadora_geometria.py vol cilindro 3 10
-""")
-
-def main():
+def parse_args():
     if len(sys.argv) < 2:
-        mostrar_ayuda()
         return
 
-    operacion = sys.argv[1].lower()
+    command = sys.argv[1].lower()
 
-    if operacion == "help":
-        mostrar_ayuda()
+    if command == "help":
+        print("""
+Usage: python geometry_calculator.py [operation] [shape] [values...]
+
+Operations:
+  area         Calculate area of a shape
+  perimeter    Calculate perimeter of a shape
+  volume       Calculate volume of a 3D shape
+
+Examples:
+  python geometry_calculator.py area circle 5
+  python geometry_calculator.py perimeter triangle 3 4 5
+  python geometry_calculator.py volume icosahedron 2
+""")
         return
 
     if len(sys.argv) < 4:
-        print("Error: Faltan argumentos.")
-        mostrar_ayuda()
+        print("Insufficient arguments. Use 'help' for usage.")
         return
 
-    figura = sys.argv[2].lower()
-    valores = sys.argv[3:]
-
-    operaciones = {
-        "area": area,
-        "per": per,
-        "vol": vol
-    }
-
-    if operacion not in operaciones:
-        print(f"Operación desconocida: '{operacion}'")
-        mostrar_ayuda()
-        return
+    shape = sys.argv[2].lower()
+    values = sys.argv[3:]
 
     try:
-        resultado = operaciones[operacion](figura, valores)
-        print(f"\nResultado final: {resultado:.5f}")
+        func = {"area": area, "perimeter": perimeter, "volume": volume}.get(command)
+        if func:
+            func(shape, *values)
+        else:
+            print(f"Unknown operation '{command}'. Use 'help' for usage.")
     except Exception as e:
         print("Error:", e)
 
 if __name__ == "__main__":
-    main()
+    parse_args()

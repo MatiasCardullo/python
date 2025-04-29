@@ -68,9 +68,9 @@ def simplify_expression(expr):
     resolve_simple(expr)
     return steps
 
-def display_and_log(steps):
+def log_steps(steps):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    output = [f"\n🧮 Step-by-step solution ({timestamp}):"]
+    output = [f"🧮 Step-by-step solution:"]
     for i, step in enumerate(steps):
         output.append(("↓ " if i != 0 else "") + step)
     result = '\n'.join(output)
@@ -80,20 +80,28 @@ def display_and_log(steps):
 
     # Save to history
     with open("history.txt", "a", encoding="utf-8") as f:
+        f.write(timestamp+"\n")
         f.write(result + "\n\n")
+
+def solve_expression(expression: str, log: bool = False):
+    steps = simplify_expression(expression)
+    if log:
+        log_steps(steps)
+    try:
+        return float(steps[-1])
+    except ValueError:
+        return None
 
 def main():
     if len(sys.argv) > 1:
         expression = ' '.join(sys.argv[1:])
-        steps = simplify_expression(expression)
-        display_and_log(steps)
+        solve_expression(expression, log=True)
     else:
         while True:
             expression = input("\nEnter an expression (or 'exit'): ")
             if expression.lower() == 'exit':
                 break
-            steps = simplify_expression(expression)
-            display_and_log(steps)
+            solve_expression(expression, log=True)
 
 if __name__ == "__main__":
     main()
