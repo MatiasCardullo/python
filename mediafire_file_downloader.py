@@ -7,9 +7,6 @@ from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, QObject
 from bs4 import BeautifulSoup
 from urllib.parse import unquote, urlparse
 
-file_links = [
-]
-
 # Helper para emitir señales desde hilos
 class DownloadSignals(QObject):
     progress = pyqtSignal(int, int)  # index, percentage
@@ -135,5 +132,5 @@ class DownloadWindow(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = DownloadWindow(file_links)
+    window = DownloadWindow(sys.argv[1:])
     sys.exit(app.exec_())

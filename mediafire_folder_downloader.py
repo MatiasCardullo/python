@@ -1,5 +1,6 @@
 import sys
-import os
+import subprocess
+import subprocess
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -46,18 +47,6 @@ def get_direct_download_link_from_html(html):
     return None
 
 
-def download_file(url, dest_folder):
-    filename = url.split("/")[-1].split("?")[0]
-    dest_path = os.path.join(dest_folder, filename)
-    print(f"⬇️  Downloading: {filename}")
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(8192):
-                f.write(chunk)
-    print(f"✅ Saved: {dest_path}")
-
-
 def run_scraper(url):
     app = QApplication(sys.argv)
     result = []
@@ -85,20 +74,16 @@ def get_direct_link_via_browser(url):
 
 
 def main(folder_url, output_folder="mediafire_downloads"):
-    os.makedirs(output_folder, exist_ok=True)
+    #os.makedirs(output_folder, exist_ok=True)
     print(f"🔍 Getting file links from folder...")
     file_pages = run_scraper(folder_url)
     print(f"📄 Found {len(file_pages)} files. Getting direct links...")
-    for i, url in enumerate(file_pages, 1):
-        print(f"\n[{i}/{len(file_pages)}] 🧭 Abriendo archivo: {url}")
-        direct_link = get_direct_link_via_browser(url)
-        if direct_link:
-            print(f"✅ Direct link: {direct_link}")
-            download_file(direct_link, output_folder)
-        else:
-            print(f"❌ No se pudo obtener el link directo.")
+    subprocess.run(["python", "mediafire_file_downloader.py"] + file_pages)
 
 
 if __name__ == "__main__":
-    folder_url = input("Enter MediaFire folder URL: ").strip()
+    if len(sys.argv) > 1:
+        folder_url = sys.argv[1:]
+    else:
+        folder_url = input("Enter MediaFire folder URL: ").strip()
     main(folder_url)
