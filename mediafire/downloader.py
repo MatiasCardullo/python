@@ -1,3 +1,4 @@
+import re
 import sys
 import threading
 import requests
@@ -54,12 +55,38 @@ class MediafireDownloader(QWebEngineView):
 
     def on_load_finished(self):
         print(f"[{self.current_index+1}/{len(self.urls)}] Página cargada...")
-        QTimer.singleShot(3000, self.extract_link)
+        QTimer.singleShot(3000, self.route_url_handling)
 
-    def extract_link(self):
-        self.page().toHtml(self.handle_html)
+    def route_url_handling(self):
+        url = self.urls[self.current_index]
+        if "/folder/" in url:
+            self.page().toHtml(self.handle_folder_html)
+        elif "/file/" or "/download/" in url:
+            self.page().toHtml(self.handle_file_html)
+        else:
+            print("❌ URL no reconocida como archivo o carpeta.")
+            self.results.append(None)
+            self.proceed_to_next()
 
-    def handle_html(self, html):
+    def handle_folder_html(self, html):
+        soup = BeautifulSoup(html, "html.parser")
+        aux = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if re.match(r"^https?://www\.mediafire\.com/file/", href):
+                aux.append(href)
+        file_links=list(set(aux))
+        if file_links:
+            print(f"📁 {len(file_links)} archivos encontrados en carpeta.")
+            # Insertamos justo después del índice actual
+            insert_position = self.current_index + 1
+            for link in reversed(file_links):  # Revertimos para mantener orden original
+                self.urls.insert(insert_position, link)
+        else:
+            print("❌ No se encontraron archivos en la carpeta.")
+        self.proceed_to_next()
+
+    def handle_file_html(self, html):
         soup = BeautifulSoup(html, "html.parser")
         button = soup.find("a", {"id": "downloadButton"})
         if button and button.has_attr("href"):
@@ -69,7 +96,9 @@ class MediafireDownloader(QWebEngineView):
         else:
             print("❌ No se encontró el enlace de descarga.")
             self.results.append(None)
+        self.proceed_to_next()
 
+    def proceed_to_next(self):
         self.current_index += 1
         if self.current_index < len(self.urls):
             self.load(QUrl(self.urls[self.current_index]))
@@ -77,6 +106,7 @@ class MediafireDownloader(QWebEngineView):
             self.direct_links_ready.emit(self.results)
             self.close()
 
+#Main - Ventana de descargas
 class DownloadWindow(QWidget):
     def __init__(self, urls):
         super().__init__()
