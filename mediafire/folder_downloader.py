@@ -2,16 +2,21 @@ import sys
 import subprocess
 import subprocess
 import re
-import requests
 from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtWebEngineWidgets import QWebEngineView,QWebEnginePage
 from PyQt5.QtCore import QUrl, QEventLoop, QTimer
+
+class SilentPage(QWebEnginePage):
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+        # Elimina cualquier mensaje JS
+        pass
 
 
 class MediafireScraper(QWebEngineView):
     def __init__(self, url, callback):
         super().__init__()
+        self.setPage(SilentPage(self))
         self.callback = callback
         self.loadFinished.connect(self.on_load_finished)
         self.load(QUrl(url))
@@ -78,12 +83,13 @@ def main(folder_url, output_folder="mediafire_downloads"):
     print(f"🔍 Getting file links from folder...")
     file_pages = run_scraper(folder_url)
     print(f"📄 Found {len(file_pages)} files. Getting direct links...")
-    subprocess.run(["python", "mediafire_file_downloader.py"] + file_pages)
+    subprocess.Popen(["python", "C:/Users/Nexxus/Desktop/python/mediafire/file_downloader.py"] + file_pages)
+    #creationflags=subprocess.CREATE_NEW_CONSOLE  # (opcional: abre una nueva consola)
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        folder_url = sys.argv[1:]
+        folder_url = sys.argv[1].strip()
     else:
         folder_url = input("Enter MediaFire folder URL: ").strip()
     main(folder_url)

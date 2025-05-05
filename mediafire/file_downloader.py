@@ -128,7 +128,7 @@ class DownloadWindow(QWidget):
     def mark_finished(self, index):
         self.labels[index].setText(f"✅ Completado: {self.labels[index].text()[12:]}")
         if all(bar.value() == 100 for bar in self.progress_bars):
-            QMessageBox.information(self, "Listo", "🎉 Todas las descargas han finalizado.")
+            self.close()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
