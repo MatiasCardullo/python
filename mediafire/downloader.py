@@ -1,5 +1,6 @@
 import re
 import os
+import time
 import sys
 import threading
 import requests
@@ -7,12 +8,13 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QProgres
 from PyQt5.QtWebEngineWidgets import QWebEngineView,QWebEnginePage
 from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, QObject
 from bs4 import BeautifulSoup
-from urllib.parse import unquote, urlparse
 
-#Mucho ruido en consola, shhhh
-class SilentPage(QWebEnginePage):
-    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
-        pass
+MAX_RETRIES = 5
+RETRY_DELAY = 3
+CHUNK_SIZE = 8192
+
+# Número máximo de descargas paralelas (ajustable)
+download_semaphore = threading.Semaphore(1)
 
 # Helper para emitir señales desde hilos
 class DownloadSignals(QObject):
@@ -28,22 +30,50 @@ class FileDownloader(threading.Thread):
         self.signals = signals
 
     def run(self):
-        try:
-            with requests.get(self.url, stream=True) as r:
-                total_length = int(r.headers.get('content-length', 0))
-                with open(self.filename, 'wb') as f:
+        with download_semaphore:  # Limita descargas simultáneas
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
                     downloaded = 0
-                    for chunk in r.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            percent = int((downloaded / total_length) * 100)
-                            self.signals.progress.emit(self.index, percent)
-            self.signals.finished.emit(self.index)
-        except Exception as e:
-            print(f"[{self.index}] ❌ Error: {e}")
-            self.signals.finished.emit(self.index)
+                    mode = 'wb'
+                    headers = {}
 
+                    if os.path.exists(self.filename):
+                        downloaded = os.path.getsize(self.filename)
+                        headers['Range'] = f'bytes={downloaded}-'
+                        mode = 'ab'
+
+                    with requests.get(self.url, stream=True, headers=headers, timeout=15) as r:
+                        total_length = r.headers.get('content-length')
+                        if total_length is None:
+                            total_length = 0
+                        else:
+                            total_length = int(total_length) + downloaded
+
+                        with open(self.filename, mode) as f:
+                            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                                if chunk:
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    if total_length:
+                                        percent = int((downloaded / total_length) * 100)
+                                        self.signals.progress.emit(self.index, percent)
+
+                    self.signals.finished.emit(self.index)
+                    return  # Éxito: salir
+
+                except Exception as e:
+                    print(f"[{self.index}] ❌ Error en intento {attempt}: {e}")
+                    if attempt < MAX_RETRIES:
+                        time.sleep(RETRY_DELAY * attempt)
+                    else:
+                        self.signals.finished.emit(self.index)
+
+#Mucho ruido en consola, shhhh
+class SilentPage(QWebEnginePage):
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+        pass
+
+#Navegador Web
 class MediafireDownloader(QWebEngineView):
     direct_links_ready = pyqtSignal(list)
 
