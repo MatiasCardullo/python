@@ -1,12 +1,18 @@
 import re
+import os
 import sys
 import threading
 import requests
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QProgressBar, QMessageBox, QScrollArea
-from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtWebEngineWidgets import QWebEngineView,QWebEnginePage
 from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, QObject
 from bs4 import BeautifulSoup
 from urllib.parse import unquote, urlparse
+
+#Mucho ruido en consola, shhhh
+class SilentPage(QWebEnginePage):
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+        pass
 
 # Helper para emitir señales desde hilos
 class DownloadSignals(QObject):
@@ -14,18 +20,18 @@ class DownloadSignals(QObject):
     finished = pyqtSignal(int)       # index
 
 class FileDownloader(threading.Thread):
-    def __init__(self, url, index, signals):
+    def __init__(self, url, filename, index, signals):
         super().__init__()
         self.url = url
+        self.filename = filename
         self.index = index
         self.signals = signals
 
     def run(self):
-        local_filename = unquote(urlparse(self.url).path.split('/')[-1])
         try:
             with requests.get(self.url, stream=True) as r:
                 total_length = int(r.headers.get('content-length', 0))
-                with open(local_filename, 'wb') as f:
+                with open(self.filename, 'wb') as f:
                     downloaded = 0
                     for chunk in r.iter_content(chunk_size=8192):
                         if chunk:
@@ -43,6 +49,7 @@ class MediafireDownloader(QWebEngineView):
 
     def __init__(self, urls):
         super().__init__()
+        self.setPage(SilentPage(self))
         self.urls = urls
         self.current_index = 0
         self.results = []
@@ -89,13 +96,16 @@ class MediafireDownloader(QWebEngineView):
     def handle_file_html(self, html):
         soup = BeautifulSoup(html, "html.parser")
         button = soup.find("a", {"id": "downloadButton"})
+        filename_tag = soup.find("div", class_="filename")
         if button and button.has_attr("href"):
             direct_link = button["href"]
+            filename = filename_tag.text.strip() if filename_tag else os.path.basename(direct_link)
             print(f"✅ Enlace directo: {direct_link}")
-            self.results.append(direct_link)
+            print(f"📄 Nombre del archivo: {filename}")
+            self.results.append((filename, direct_link))
         else:
             print("❌ No se encontró el enlace de descarga.")
-            self.results.append(None)
+            self.results.append((None,None))
         self.proceed_to_next()
 
     def proceed_to_next(self):
@@ -128,12 +138,11 @@ class DownloadWindow(QWidget):
         self.downloader.start()
 
     def start_downloads(self, direct_links):
-        for index, link in enumerate(direct_links):
+        for index, (filename, link) in enumerate(direct_links):
             if not link:
                 continue
 
-            name = unquote(urlparse(link).path.split('/')[-1])
-            label = QLabel(f"Descargando: {name}")
+            label = QLabel(f"Descargando: {filename}")
             bar = QProgressBar()
             bar.setValue(0)
 
@@ -147,7 +156,7 @@ class DownloadWindow(QWidget):
             signals.progress.connect(self.update_progress)
             signals.finished.connect(self.mark_finished)
 
-            thread = FileDownloader(link, index, signals)
+            thread = FileDownloader(link, filename, index, signals)
             thread.start()
 
         self.show()
