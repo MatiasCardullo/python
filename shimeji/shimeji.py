@@ -1,7 +1,7 @@
 import sys
 import os
-from PyQt6.QtCore import Qt, QPoint, QTimer, QCoreApplication
-from PyQt6.QtGui import QPixmap, QGuiApplication
+from PyQt6.QtCore import Qt, QPoint, QTimer
+from PyQt6.QtGui import QPixmap, QGuiApplication, QTransform
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 class Shimeji(QWidget):
@@ -23,12 +23,12 @@ class Shimeji(QWidget):
 
         # Movimiento automático
         self.walking = True
-        self.direction = -1  # 1 = derecha, -1 = izquierda
+        self.direction = 1  # 1 = derecha, -1 = izquierda
         self.speed = 3
 
         # Imagen
         self.label = QLabel(self)
-        self.label.setPixmap(self.behaviors[self.current_behavior][0])
+        self.label.setPixmap(self.get_frame())
         self.resize(self.label.pixmap().size())
 
         # Animación con timer
@@ -38,6 +38,12 @@ class Shimeji(QWidget):
 
         # Movimiento manual
         self.old_pos = QPoint()
+
+        # Timers
+        self.idle_timer = QTimer()
+        self.idle_timer.setInterval(8000)  # 8 segundos sin interacción
+        self.idle_timer.timeout.connect(self.enter_sleep)
+        self.idle_timer.start()
 
     def load_behaviors(self):
         sprite_dir = "sprites"
@@ -56,14 +62,22 @@ class Shimeji(QWidget):
         if behavior_name in self.behaviors:
             self.current_behavior = behavior_name
             self.current_frame = 0
-            self.label.setPixmap(self.behaviors[behavior_name][0])
+            self.label.setPixmap(self.get_frame())
             self.resize(self.label.pixmap().size())
             self.walking = (behavior_name == "walk")
+
+    def get_frame(self):
+        frame = self.behaviors[self.current_behavior][self.current_frame]
+        if self.walking and self.direction == 1:
+            # Voltear horizontalmente si camina a la izquierda
+            transform = QTransform().scale(-1, 1)
+            frame = frame.transformed(transform)
+        return frame
 
     def update_frame(self):
         frames = self.behaviors[self.current_behavior]
         self.current_frame = (self.current_frame + 1) % len(frames)
-        self.label.setPixmap(frames[self.current_frame])
+        self.label.setPixmap(self.get_frame())
 
         if self.walking:
             self.auto_move()
@@ -82,19 +96,28 @@ class Shimeji(QWidget):
 
         self.move(x, self.y())
 
+    def enter_sleep(self):
+        self.set_behavior("sleep")
+
+    def reset_idle_timer(self):
+        self.idle_timer.start()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.old_pos = event.globalPosition().toPoint()
             self.set_behavior("idle")
+            self.reset_idle_timer()
 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.MouseButton.LeftButton:
             delta = event.globalPosition().toPoint() - self.old_pos
             self.move(self.x() + delta.x(), self.y() + delta.y())
             self.old_pos = event.globalPosition().toPoint()
+            self.reset_idle_timer()
 
     def mouseReleaseEvent(self, event):
         self.set_behavior("walk")
+        self.reset_idle_timer()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
