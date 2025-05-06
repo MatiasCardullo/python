@@ -9,12 +9,12 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView,QWebEnginePage
 from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, QObject
 from bs4 import BeautifulSoup
 
-MAX_RETRIES = 5
+MAX_RETRIES = 100
 RETRY_DELAY = 3
 CHUNK_SIZE = 8192
 
 # Número máximo de descargas paralelas (ajustable)
-download_semaphore = threading.Semaphore(1)
+download_semaphore = threading.Semaphore(2)
 
 # Helper para emitir señales desde hilos
 class DownloadSignals(QObject):
@@ -49,6 +49,9 @@ class FileDownloader(threading.Thread):
                         else:
                             total_length = int(total_length) + downloaded
 
+                        dir_path = os.path.dirname(self.filename)
+                        if dir_path:
+                            os.makedirs(dir_path, exist_ok=True)
                         with open(self.filename, mode) as f:
                             for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
                                 if chunk:
@@ -80,59 +83,74 @@ class MediafireDownloader(QWebEngineView):
     def __init__(self, urls):
         super().__init__()
         self.setPage(SilentPage(self))
-        self.urls = urls
+        self.urls = [(url, "") for url in urls]  # Url,path
         self.current_index = 0
         self.results = []
         self.setWindowTitle("Mediafire Downloader")
         self.loadFinished.connect(self.on_load_finished)
-        self.load(QUrl(self.urls[self.current_index]))
+        self.load(QUrl(self.urls[self.current_index][0]))
 
     def start(self):
         self.show()
 
     def on_load_finished(self):
-        print(f"[{self.current_index+1}/{len(self.urls)}] Página cargada...")
+        print(f"[{self.current_index+1}/{len(self.urls)}] Páginas cargadas...")
         QTimer.singleShot(3000, self.route_url_handling)
 
     def route_url_handling(self):
-        url = self.urls[self.current_index]
+        url, path = self.urls[self.current_index]
         if "/folder/" in url:
-            self.page().toHtml(self.handle_folder_html)
-        elif "/file/" or "/download/" in url:
-            self.page().toHtml(self.handle_file_html)
+            self.page().toHtml(lambda html: self.handle_folder_html(html, path))
+        elif "/file/" in url or "/download/" in url:
+            self.page().toHtml(lambda html: self.handle_file_html(html, path))
         else:
             print("❌ URL no reconocida como archivo o carpeta.")
             self.results.append(None)
             self.proceed_to_next()
 
-    def handle_folder_html(self, html):
+    def handle_folder_html(self, html, base_path):
         soup = BeautifulSoup(html, "html.parser")
         aux = []
+        # Detectar nombre de la carpeta (desde <title> o header)
+        title_tag = soup.find(id="folder_name")
+        folder_name = "Subcarpeta"  # Fallback
+        if title_tag and title_tag.has_attr("title"):
+            folder_name = title_tag["title"]
+
+        subfolder_path = os.path.join(base_path, folder_name)
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if re.match(r"^https?://www\.mediafire\.com/file/", href):
                 aux.append(href)
-        file_links=list(set(aux))
+            elif re.match(r"^#\w+", href):
+                folder_id = href.lstrip("#")  # Quitamos el '#' del inicio
+                span = a.find("span", class_="item-name")
+                if span:
+                    span_name = span.text.strip().replace(" ", "_")  # Reemplazamos espacios con "_"
+                    full_url = f"https://www.mediafire.com/folder/{folder_id}/{span_name}"
+                    aux.append(full_url)
+
+        file_links = list(set(aux))
         if file_links:
-            print(f"📁 {len(file_links)} archivos encontrados en carpeta.")
-            # Insertamos justo después del índice actual
+            print(f"📁 {len(file_links)} archivos encontrados en carpeta '{folder_name}'.")
             insert_position = self.current_index + 1
-            for link in reversed(file_links):  # Revertimos para mantener orden original
-                self.urls.insert(insert_position, link)
+            for link in reversed(file_links):
+                self.urls.insert(insert_position, (link, subfolder_path))
         else:
             print("❌ No se encontraron archivos en la carpeta.")
         self.proceed_to_next()
 
-    def handle_file_html(self, html):
+    def handle_file_html(self, html, current_path):
         soup = BeautifulSoup(html, "html.parser")
         button = soup.find("a", {"id": "downloadButton"})
         filename_tag = soup.find("div", class_="filename")
         if button and button.has_attr("href"):
             direct_link = button["href"]
             filename = filename_tag.text.strip() if filename_tag else os.path.basename(direct_link)
+            full_path = os.path.join(current_path, filename)
             print(f"✅ Enlace directo: {direct_link}")
-            print(f"📄 Nombre del archivo: {filename}")
-            self.results.append((filename, direct_link))
+            print(f"📄 Guardar como: {full_path}")
+            self.results.append((full_path, direct_link))
         else:
             print("❌ No se encontró el enlace de descarga.")
             self.results.append((None,None))
@@ -141,7 +159,7 @@ class MediafireDownloader(QWebEngineView):
     def proceed_to_next(self):
         self.current_index += 1
         if self.current_index < len(self.urls):
-            self.load(QUrl(self.urls[self.current_index]))
+            self.load(QUrl(self.urls[self.current_index][0]))
         else:
             self.direct_links_ready.emit(self.results)
             self.close()
@@ -168,11 +186,15 @@ class DownloadWindow(QWidget):
         self.downloader.start()
 
     def start_downloads(self, direct_links):
-        for index, (filename, link) in enumerate(direct_links):
+        for index, (relative_path, link) in enumerate(direct_links):
             if not link:
                 continue
+            
+            dir_path = os.path.dirname(relative_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
 
-            label = QLabel(f"Descargando: {filename}")
+            label = QLabel(f"Descargando: {relative_path}")
             bar = QProgressBar()
             bar.setValue(0)
 
@@ -186,7 +208,7 @@ class DownloadWindow(QWidget):
             signals.progress.connect(self.update_progress)
             signals.finished.connect(self.mark_finished)
 
-            thread = FileDownloader(link, filename, index, signals)
+            thread = FileDownloader(link, relative_path, index, signals)
             thread.start()
 
         self.show()
@@ -197,9 +219,10 @@ class DownloadWindow(QWidget):
     def mark_finished(self, index):
         self.labels[index].setText(f"✅ Completado: {self.labels[index].text()[12:]}")
         if all(bar.value() == 100 for bar in self.progress_bars):
-            self.close()
+            QTimer.singleShot(5000, self.close)            
 
 if __name__ == '__main__':
+    os.system("title Descargas")
     app = QApplication(sys.argv)
     window = DownloadWindow(sys.argv[1:])
     sys.exit(app.exec_())
