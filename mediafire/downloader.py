@@ -1,75 +1,12 @@
 import re
 import os
-import time
 import sys
-import threading
-import requests
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QProgressBar, QMessageBox, QScrollArea
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QProgressBar, QScrollArea,QPushButton,QDialog
 from PyQt5.QtWebEngineWidgets import QWebEngineView,QWebEnginePage
-from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, QObject
+from PyQt5.QtCore import QUrl, QTimer, pyqtSignal
 from bs4 import BeautifulSoup
-
-MAX_RETRIES = 100
-RETRY_DELAY = 3
-CHUNK_SIZE = 8192
-
-# Número máximo de descargas paralelas (ajustable)
-download_semaphore = threading.Semaphore(2)
-
-# Helper para emitir señales desde hilos
-class DownloadSignals(QObject):
-    progress = pyqtSignal(int, int)  # index, percentage
-    finished = pyqtSignal(int)       # index
-
-class FileDownloader(threading.Thread):
-    def __init__(self, url, filename, index, signals):
-        super().__init__()
-        self.url = url
-        self.filename = filename
-        self.index = index
-        self.signals = signals
-
-    def run(self):
-        with download_semaphore:  # Limita descargas simultáneas
-            for attempt in range(1, MAX_RETRIES + 1):
-                try:
-                    downloaded = 0
-                    mode = 'wb'
-                    headers = {}
-
-                    if os.path.exists(self.filename):
-                        downloaded = os.path.getsize(self.filename)
-                        headers['Range'] = f'bytes={downloaded}-'
-                        mode = 'ab'
-
-                    with requests.get(self.url, stream=True, headers=headers, timeout=15) as r:
-                        total_length = r.headers.get('content-length')
-                        if total_length is None:
-                            total_length = 0
-                        else:
-                            total_length = int(total_length) + downloaded
-
-                        dir_path = os.path.dirname(self.filename)
-                        if dir_path:
-                            os.makedirs(dir_path, exist_ok=True)
-                        with open(self.filename, mode) as f:
-                            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-                                if chunk:
-                                    f.write(chunk)
-                                    downloaded += len(chunk)
-                                    if total_length:
-                                        percent = int((downloaded / total_length) * 100)
-                                        self.signals.progress.emit(self.index, percent)
-
-                    self.signals.finished.emit(self.index)
-                    return  # Éxito: salir
-
-                except Exception as e:
-                    print(f"[{self.index}] ❌ Error en intento {attempt}: {e}")
-                    if attempt < MAX_RETRIES:
-                        time.sleep(RETRY_DELAY * attempt)
-                    else:
-                        self.signals.finished.emit(self.index)
+import file_downloader
+from settings_dialog import SettingsDialog, load_config
 
 #Mucho ruido en consola, shhhh
 class SilentPage(QWebEnginePage):
@@ -95,7 +32,7 @@ class MediafireDownloader(QWebEngineView):
 
     def on_load_finished(self):
         print(f"[{self.current_index+1}/{len(self.urls)}] Páginas cargadas...")
-        QTimer.singleShot(3000, self.route_url_handling)
+        QTimer.singleShot(1000, self.route_url_handling)
 
     def route_url_handling(self):
         url, path = self.urls[self.current_index]
@@ -111,7 +48,6 @@ class MediafireDownloader(QWebEngineView):
     def handle_folder_html(self, html, base_path):
         soup = BeautifulSoup(html, "html.parser")
         aux = []
-        # Detectar nombre de la carpeta (desde <title> o header)
         title_tag = soup.find(id="folder_name")
         folder_name = "Subcarpeta"  # Fallback
         if title_tag and title_tag.has_attr("title"):
@@ -123,10 +59,10 @@ class MediafireDownloader(QWebEngineView):
             if re.match(r"^https?://www\.mediafire\.com/file/", href):
                 aux.append(href)
             elif re.match(r"^#\w+", href):
-                folder_id = href.lstrip("#")  # Quitamos el '#' del inicio
+                folder_id = href.lstrip("#")
                 span = a.find("span", class_="item-name")
                 if span:
-                    span_name = span.text.strip().replace(" ", "_")  # Reemplazamos espacios con "_"
+                    span_name = span.text.strip().replace(" ", "_")
                     full_url = f"https://www.mediafire.com/folder/{folder_id}/{span_name}"
                     aux.append(full_url)
 
@@ -149,7 +85,7 @@ class MediafireDownloader(QWebEngineView):
             filename = filename_tag.text.strip() if filename_tag else os.path.basename(direct_link)
             full_path = os.path.join(current_path, filename)
             print(f"✅ Enlace directo: {direct_link}")
-            print(f"📄 Guardar como: {full_path}")
+            print(f"💾 Guardar como: {full_path}")
             self.results.append((full_path, direct_link))
         else:
             print("❌ No se encontró el enlace de descarga.")
@@ -171,21 +107,40 @@ class DownloadWindow(QWidget):
         self.setWindowTitle("Descargas MediaFire")
         self.layout = QVBoxLayout(self)
 
+        self.config = load_config()
+        self.max_parallel_downloads = self.config.get("max_parallel_downloads")
+        self.open_on_finish = self.config.get("open_on_finish")
+
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.inner_widget = QWidget()
         self.inner_layout = QVBoxLayout(self.inner_widget)
         self.scroll.setWidget(self.inner_widget)
         self.layout.addWidget(self.scroll)
+        self.settings_button = QPushButton("⚙ Opciones")
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+        self.layout.addWidget(self.settings_button)
 
         self.progress_bars = []
         self.labels = []
-
         self.downloader = MediafireDownloader(urls)
         self.downloader.direct_links_ready.connect(self.start_downloads)
         self.downloader.start()
 
+    def open_settings_dialog(self):
+        dialog = SettingsDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            # Recargar config desde el archivo
+            self.config = load_config()
+            # Aplicar nueva configuración de descargas paralelas
+            self.max_parallel_downloads=self.config.get("max_parallel_downloads")
+            file_downloader.set_max_parallel_downloads(self.max_parallel_downloads)
+            # Si tenés más settings, los podés aplicar aquí también
+            self.open_on_finish = self.config.get("open_on_finish")
+            print(f"✅ Configuración actualizada: {self.config}")
+
     def start_downloads(self, direct_links):
+        self.completed_downloads = 0
         for index, (relative_path, link) in enumerate(direct_links):
             if not link:
                 continue
@@ -204,22 +159,27 @@ class DownloadWindow(QWidget):
             self.labels.append(label)
             self.progress_bars.append(bar)
 
-            signals = DownloadSignals()
+            signals = file_downloader.DownloadSignals()
             signals.progress.connect(self.update_progress)
             signals.finished.connect(self.mark_finished)
 
-            thread = FileDownloader(link, relative_path, index, signals)
+            thread = file_downloader.FileDownloader(link, relative_path, index, signals)
             thread.start()
-
+        self.total_downloads = len(self.progress_bars)
         self.show()
 
     def update_progress(self, index, percent):
         self.progress_bars[index].setValue(percent)
 
     def mark_finished(self, index):
-        self.labels[index].setText(f"✅ Completado: {self.labels[index].text()[12:]}")
-        if all(bar.value() == 100 for bar in self.progress_bars):
-            QTimer.singleShot(5000, self.close)            
+        done=f"✅ Completado: {self.labels[index].text()[12:]}"
+        print(done)
+        self.labels[index].setText(done)
+        self.inner_layout.removeWidget(self.progress_bars[index])
+        self.progress_bars[index].deleteLater()
+        self.completed_downloads += 1
+        if self.completed_downloads == self.total_downloads:
+            QTimer.singleShot(10000, self.close)            
 
 if __name__ == '__main__':
     os.system("title Descargas")
