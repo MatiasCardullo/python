@@ -1,12 +1,12 @@
 import re
 import os
 import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QProgressBar, QScrollArea,QPushButton,QDialog
+from PyQt5.QtWidgets import QApplication, QWidget,QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QScrollArea,QPushButton,QDialog,QTextEdit
 from PyQt5.QtWebEngineWidgets import QWebEngineView,QWebEnginePage
 from PyQt5.QtCore import QUrl, QTimer, pyqtSignal
 from bs4 import BeautifulSoup
 import file_downloader
-from settings_dialog import SettingsDialog, load_config
+from settings_dialog import SettingsDialog, load_config,DEFAULT_CONFIG
 
 #Mucho ruido en consola, shhhh
 class SilentPage(QWebEnginePage):
@@ -14,9 +14,9 @@ class SilentPage(QWebEnginePage):
         pass
 
 #Navegador Web
-class MediafireDownloader(QWebEngineView):
+class UniversalDownloader(QWebEngineView):
     direct_links_ready = pyqtSignal(list)
-
+    
     def __init__(self, urls):
         super().__init__()
         self.setPage(SilentPage(self))
@@ -36,16 +36,41 @@ class MediafireDownloader(QWebEngineView):
 
     def route_url_handling(self):
         url, path = self.urls[self.current_index]
-        if "/folder/" in url:
-            self.page().toHtml(lambda html: self.handle_folder_html(html, path))
-        elif "/file/" in url or "/download/" in url:
-            self.page().toHtml(lambda html: self.handle_file_html(html, path))
+        
+        if "mediafire.com" in url:
+            self.handle_mediafire(url, path)
+        elif "4shared.com" in url:
+            self.handle_4shared(url, path)
+        elif "drive.google.com" in url:
+            self.handle_gdrive(url, path)
         else:
-            print("❌ URL no reconocida como archivo o carpeta.")
+            print("❌ Sitio no soportado.")
             self.results.append(None)
             self.proceed_to_next()
 
-    def handle_folder_html(self, html, base_path):
+    def handle_4shared(self, url, path):
+        print("📦 Soporte para 4shared aún no implementado.")
+        self.results.append(None)
+        self.proceed_to_next()
+
+    def handle_gdrive(self, url, path):
+        print("📦 Soporte para Google Drive aún no implementado.")
+        self.results.append(None)
+        self.proceed_to_next()
+
+    def handle_mediafire(self, url, path):
+        if "/folder/" in url:
+            self.page().toHtml(lambda html: self.handle_mediafire_folder(html, path))
+        elif "/file/" in url or "/download/" in url:
+            self.page().toHtml(lambda html: self.handle_mediafire_file(html, path))
+        else:
+            print("❌ URL de MediaFire no reconocida.")
+            self.results.append(None)
+            self.proceed_to_next()
+
+    def handle_mediafire_folder(self, url, base_path):
+        soup = BeautifulSoup(url, "html.parser")
+    def handle_mediafire_folder(self, html, base_path):
         soup = BeautifulSoup(html, "html.parser")
         aux = []
         title_tag = soup.find(id="folder_name")
@@ -76,7 +101,7 @@ class MediafireDownloader(QWebEngineView):
             print("❌ No se encontraron archivos en la carpeta.")
         self.proceed_to_next()
 
-    def handle_file_html(self, html, current_path):
+    def handle_mediafire_file(self, html, current_path):
         soup = BeautifulSoup(html, "html.parser")
         button = soup.find("a", {"id": "downloadButton"})
         filename_tag = soup.find("div", class_="filename")
@@ -105,11 +130,13 @@ class DownloadWindow(QWidget):
     def __init__(self, urls):
         super().__init__()
         self.setWindowTitle("Descargas MediaFire")
+        self.setMinimumSize(400, 200)
         self.layout = QVBoxLayout(self)
 
         self.config = load_config()
-        self.max_parallel_downloads = self.config.get("max_parallel_downloads")
-        self.open_on_finish = self.config.get("open_on_finish")
+        self.folder_path = self.config.get("folder_path",DEFAULT_CONFIG["folder_path"])
+        self.open_on_finish = self.config.get("open_on_finish",DEFAULT_CONFIG["open_on_finish"])
+        self.max_parallel_downloads = self.config.get("max_parallel_downloads",DEFAULT_CONFIG["max_parallel_downloads"])
 
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
@@ -117,27 +144,21 @@ class DownloadWindow(QWidget):
         self.inner_layout = QVBoxLayout(self.inner_widget)
         self.scroll.setWidget(self.inner_widget)
         self.layout.addWidget(self.scroll)
-        self.settings_button = QPushButton("⚙ Opciones")
+        self.settings_button = QPushButton("Configuración ⚙")
         self.settings_button.clicked.connect(self.open_settings_dialog)
         self.layout.addWidget(self.settings_button)
 
         self.progress_bars = []
         self.labels = []
-        self.downloader = MediafireDownloader(urls)
+        self.downloader = UniversalDownloader(urls)
         self.downloader.direct_links_ready.connect(self.start_downloads)
         self.downloader.start()
 
+    
     def open_settings_dialog(self):
         dialog = SettingsDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            # Recargar config desde el archivo
-            self.config = load_config()
-            # Aplicar nueva configuración de descargas paralelas
-            self.max_parallel_downloads=self.config.get("max_parallel_downloads")
-            file_downloader.set_max_parallel_downloads(self.max_parallel_downloads)
-            # Si tenés más settings, los podés aplicar aquí también
-            self.open_on_finish = self.config.get("open_on_finish")
-            print(f"✅ Configuración actualizada: {self.config}")
+            self.apply_settings()
 
     def start_downloads(self, direct_links):
         self.completed_downloads = 0
@@ -181,8 +202,61 @@ class DownloadWindow(QWidget):
         if self.completed_downloads == self.total_downloads:
             QTimer.singleShot(10000, self.close)            
 
+#Optional - Ventana para ingresar links
+class LinkInputWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Pegar enlaces de paginas de descarga")
+        self.setMinimumSize(400, 200)
+        self.config = load_config()
+
+        layout = QVBoxLayout()
+        self.instructions = QLabel("Pega uno o más enlaces (uno por línea):")
+        self.textbox = QTextEdit()
+        self.accept_button = QPushButton("Iniciar Descargas")
+        self.accept_button.clicked.connect(self.proceed)
+        self.settings_button = QPushButton('⚙')
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+        self.settings_button.setFixedWidth(25) 
+
+        layout.addWidget(self.instructions)
+        layout.addWidget(self.textbox)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.accept_button)
+        buttons.addWidget(self.settings_button)
+        layout.addLayout(buttons)
+        self.setLayout(layout)
+
+        self.links = []
+
+    def open_settings_dialog(self):
+        dialog = SettingsDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.apply_settings()
+    
+    def proceed(self):
+        text = self.textbox.toPlainText().strip()
+        if text:
+            self.links = [line.strip() for line in text.splitlines() if line.strip()]
+            self.close()
+
+def apply_settings(self):
+    self.config = load_config()
+    self.folder_path = self.config.get("folder_path")
+    self.open_on_finish = self.config.get("open_on_finish")
+    self.max_parallel_downloads = self.config.get("max_parallel_downloads")
+    file_downloader.set_max_parallel_downloads(self.max_parallel_downloads)
+    print(f"✅ Configuración actualizada: {self.config}")
+
 if __name__ == '__main__':
     os.system("title Descargas")
     app = QApplication(sys.argv)
-    window = DownloadWindow(sys.argv[1:])
-    sys.exit(app.exec_())
+    args = sys.argv[1:]
+    if not args:
+        link_input = LinkInputWindow()
+        link_input.show()
+        app.exec_()
+        args = link_input.links
+    if args:
+        window = DownloadWindow(args)
+        sys.exit(app.exec_())
