@@ -1,3 +1,4 @@
+import json
 import time, re, os, sys, uuid, functools
 from PyQt5.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QScrollArea, QPushButton, QDialog, QTextEdit
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
@@ -22,95 +23,56 @@ class SilentPage(QWebEnginePage):
 #Navegador Web
 class UniversalDownloader(QWebEngineView):
     direct_links_ready = pyqtSignal(list)
-    
-    def __init__(self, urls):
+
+    def __init__(self, items):
         super().__init__()
         self.setPage(SilentPage(self))
-        self.urls = []
-        self.offscreen_results = []
-        # Clasificamos las URLs: torrents/magnets se manejan sin navegador
-        for url in urls:
-            if url.startswith("magnet:?"):
-                print(f"🔗 Magnet detectado: {url}")
-                filename = f"{uuid.uuid4().hex[:8]}.magnet"
-                self.offscreen_results.append((filename, url))
-            elif url.endswith(".torrent") or "torrage" in url or "itorrents" in url:
-                print(f"🔗 Torrent detectado: {url}")
-                filename = url.split("/")[-1].split("?")[0]
-                self.offscreen_results.append((filename, url))
-            else:
-                self.urls.append((url, ""))  # Se maneja con QWebEngine
 
+        self.items = items  # Lista completa (cada item con 'url', 'password', etc.)
+        self.targets = []   # Solo los que necesitan navegador
         self.current_index = 0
-        self.results = []
 
-        # Si no quedan URLs para el navegador, emitir directamente
-        if not self.urls:
-            QTimer.singleShot(100, lambda: self.direct_links_ready.emit(self.offscreen_results))
+        # Expandir los items en sub-items individuales (uno por URL)
+        for entry in self.items:
+            urls = entry["url"] if isinstance(entry["url"], list) else [entry["url"]]
+            pwd_raw = entry.get("password", "")
+            passwords = pwd_raw if isinstance(pwd_raw, list) else [pwd_raw]
+            for u, p in zip(urls, passwords):
+                self.targets.append({
+                    "original_entry": entry,
+                    "url": u,
+                    "password": p,
+                    "base_path": entry.get("path") or "",  # puede cambiar después
+                })
+
+        if not self.targets:
+            QTimer.singleShot(100, lambda: self.direct_links_ready.emit(self.items))
             return
 
         self.setWindowTitle("Universal Downloader")
         self.loadFinished.connect(self.on_load_finished)
-        self.load(QUrl(self.urls[self.current_index][0]))
-
-    def start(self):
-        if self.urls:
-            self.show()
-        else:
-            self.close()
+        self.load(QUrl(self.targets[0]["url"]))
 
     def on_load_finished(self):
-        print(self.urls[self.current_index])
-        print(f"[{self.current_index+1}/{len(self.urls)}] Páginas cargadas...")
+        current = self.targets[self.current_index]
+        print(f"[{self.current_index + 1}/{len(self.targets)}] Cargando: {current['url']}")
         QTimer.singleShot(1000, self.route_url_handling)
 
     def route_url_handling(self):
-        url, path = self.urls[self.current_index]
-        
+        target = self.targets[self.current_index]
+        url = target["url"]
+        path = target["base_path"]
+
         if "mediafire.com" in url:
             self.handle_mediafire(url, path)
-        elif "4shared.com" in url:
-            self.page().toHtml(lambda html: self.handle_4shared(html, path))
-        elif "drive.google.com" in url:
-            self.handle_gdrive(url, path)
+        #elif "4shared.com" in url:
+        #    self.page().toHtml(lambda html: self.handle_4shared(html, path))
+        #elif "drive.google.com" in url:
+        #    self.handle_gdrive(url, path)
         else:
-            print("❌ Sitio no soportado.")
-            self.results.append(None)
+            print(f"❌ Sitio no soportado: {url}")
+            self.register_result(None, None)
             self.proceed_to_next()
-
-    def handle_4shared(self, html, current_path):
-        soup = BeautifulSoup(html, "html.parser")
-        download_button = soup.find("a", {"id": "freeDlButton"})
-
-        #No funciona por ahora, ver despues
-        #link d prueba https://www.4shared.com/file/uCcrCZLG/DAEMON_Tools_Lite_44540315.html
-        if download_button and download_button.has_attr("href"):
-            direct_link = download_button["href"]
-            title_tag = soup.find("title")
-            filename = title_tag.text.strip().split(" - ")[0] if title_tag else os.path.basename(direct_link)
-            full_path = os.path.join(current_path, filename)
-            print(f"✅ Enlace directo (4shared): {direct_link}")
-            print(f"💾 Guardar como: {full_path}")
-            self.results.append((full_path, direct_link))
-        else:
-            print("❌ No se encontró el enlace de descarga en 4shared.")
-            self.results.append((None, None))
-        self.proceed_to_next()
-
-    def handle_gdrive(self, url, current_path):
-        match = re.search(r"/d/([a-zA-Z0-9_-]+)", url)
-        if match:
-            file_id = match.group(1)
-            direct_link = f"https://drive.usercontent.google.com/download?id={file_id}&export=download"
-            filename = f"{file_id}.bin"  # Nombre provisional si no podemos obtener el real
-            full_path = os.path.join(current_path, filename)
-            print(f"✅ Enlace directo (Google Drive): {direct_link}")
-            print(f"💾 Guardar como: {full_path}")
-            self.results.append((full_path, direct_link))
-        else:
-            print("❌ No se pudo extraer el ID del archivo de Google Drive.")
-            self.results.append((None, None))
-        self.proceed_to_next()
 
     def handle_mediafire(self, url, path):
         if "/folder/" in url:
@@ -119,18 +81,18 @@ class UniversalDownloader(QWebEngineView):
             self.page().toHtml(lambda html: self.handle_mediafire_file(html, path))
         else:
             print("❌ URL de MediaFire no reconocida.")
-            self.results.append(None)
+            self.register_result(None, None)
             self.proceed_to_next()
 
     def handle_mediafire_folder(self, html, base_path):
         soup = BeautifulSoup(html, "html.parser")
         aux = []
+        folder_name = "Subcarpeta"
         title_tag = soup.find(id="folder_name")
-        folder_name = "Subcarpeta"  # Fallback
         if title_tag and title_tag.has_attr("title"):
             folder_name = title_tag["title"]
-
         subfolder_path = os.path.join(base_path, folder_name)
+
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if re.match(r"^https?://www\.mediafire\.com/file/", href):
@@ -145,41 +107,67 @@ class UniversalDownloader(QWebEngineView):
 
         file_links = list(set(aux))
         if file_links:
-            print(f"📁 {len(file_links)} archivos encontrados en carpeta '{folder_name}'.")
+            print(f"📁 {len(file_links)} archivos encontrados.")
             insert_position = self.current_index + 1
             for link in reversed(file_links):
-                self.urls.insert(insert_position, (link, subfolder_path))
+                self.targets.insert(insert_position, {
+                    "original_entry": self.targets[self.current_index]["original_entry"],
+                    "url": link,
+                    "password": self.targets[self.current_index]["password"],
+                    "base_path": subfolder_path
+                })
         else:
             print("❌ No se encontraron archivos en la carpeta.")
         self.proceed_to_next()
 
-    def handle_mediafire_file(self, html, current_path):
+    def handle_mediafire_file(self, html, path):
         soup = BeautifulSoup(html, "html.parser")
         button = soup.find("a", {"id": "downloadButton"})
         filename_tag = soup.find("div", class_="filename")
         if button and button.has_attr("href"):
             direct_link = button["href"]
             filename = filename_tag.text.strip() if filename_tag else os.path.basename(direct_link)
-            full_path = os.path.join(current_path, filename)
-            print(f"✅ Enlace directo: {direct_link}")
-            print(f"💾 Guardar como: {full_path}")
-            self.results.append((full_path, direct_link))
+            full_path = os.path.join(path, filename)
+            self.register_result(full_path, direct_link)
         else:
             print("❌ No se encontró el enlace de descarga.")
-            self.results.append((None, None))
+            self.register_result(None, None)
         self.proceed_to_next()
+
+    def register_result(self, path, direct_link):
+        target = self.targets[self.current_index]
+        entry = target["original_entry"]
+
+        # Si fue exitoso, actualizamos
+        if path and direct_link:
+            entry["direct_link"] = direct_link
+            entry["path"] = path
+            entry["url"] = target["url"]
+            entry["password"] = target["password"]
+        else:
+            # Eliminamos este mirror de la entrada
+            urls = entry["url"] if isinstance(entry["url"], list) else [entry["url"]]
+            pwds = entry["password"] if isinstance(entry["password"], list) else [entry["password"]]
+            if target["url"] in urls:
+                idx = urls.index(target["url"])
+                urls.pop(idx)
+                if idx < len(pwds):
+                    pwds.pop(idx)
+            entry["url"] = urls if len(urls) > 1 else (urls[0] if urls else "")
+            entry["password"] = pwds if len(pwds) > 1 else (pwds[0] if pwds else "")
 
     def proceed_to_next(self):
         self.current_index += 1
-        if self.current_index < len(self.urls):
-            self.load(QUrl(self.urls[self.current_index][0]))
+        if self.current_index < len(self.targets):
+            self.load(QUrl(self.targets[self.current_index]["url"]))
         else:
-            self.direct_links_ready.emit(self.results)
+            # Devolver toda la lista original, con actualizaciones
+            self.direct_links_ready.emit(self.items)
             self.close()
 
 #Main - Ventana de descargas
 class DownloadWindow(QWidget):
-    def __init__(self, urls):
+    def __init__(self, json_entries):
         super().__init__()
         self.setWindowTitle("Descargador Universal")
         self.setMinimumSize(400, 200)
@@ -211,13 +199,15 @@ class DownloadWindow(QWidget):
         self.temp_labels = []
         self.torrent_progress_bars = []
         self.torrent_labels = []
-        self.downloader = UniversalDownloader(urls)
+        self.downloader = UniversalDownloader(json_entries)
         self.downloader.direct_links_ready.connect(self.start_downloads)
-        self.downloader.start()
 
     def start_downloads(self, direct_links):
-        for index, (relative_path, link) in enumerate(direct_links):
-            full_path = os.path.join(self.folder_path, relative_path)
+        for index, entry in enumerate(direct_links):
+            link = entry.get("direct_link")
+            path = entry.get("path","")
+            #password = entry.get("password")
+            full_path = os.path.join(self.folder_path, path)
             if not link:
                 continue
 
@@ -238,7 +228,7 @@ class DownloadWindow(QWidget):
                             print(f"❌ Archivo .torrent no encontrado: {path}")
                     return lambda: check_file()
                 
-                label = QLabel(f"Descargando .torrent: {relative_path}")
+                label = QLabel(f"Descargando .torrent: {path}")
                 bar = QProgressBar()
                 bar.setValue(0)
                 self.inner_layout.addWidget(label)
@@ -259,7 +249,7 @@ class DownloadWindow(QWidget):
                 if dir_path:
                     os.makedirs(dir_path, exist_ok=True)
 
-                label = QLabel(f"Descargando: {relative_path}")
+                label = QLabel(f"Descargando: {path}")
                 bar = QProgressBar()
                 bar.setValue(0)
                 self.inner_layout.addWidget(label)
@@ -394,12 +384,22 @@ def apply_settings():
 if __name__ == '__main__':
     os.system("title Descargas")
     app = QApplication(sys.argv)
+
     args = sys.argv[1:]
-    if not args:
+
+    if args and args[0].endswith(".json") and os.path.exists(args[0]):
+        # Leer el JSON desde archivo
+        with open(args[0], "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+        window = DownloadWindow(json_data)
+        sys.exit(app.exec_())
+    else:
+        # Modo interactivo: entrada de enlaces
         link_input = LinkInputWindow()
         link_input.show()
         app.exec_()
-        args = link_input.links
-    if args:
-        window = DownloadWindow(args)
-        sys.exit(app.exec_())
+        if link_input.links:
+            # Convertir a estructura de JSON mínima
+            json_data = [{"url": url} for url in link_input.links]
+            window = DownloadWindow(json_data)
+            sys.exit(app.exec_())
