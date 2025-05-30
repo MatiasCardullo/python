@@ -73,17 +73,20 @@ class RecipeEditorTab(QWidget):
         form = QFormLayout()
         self.name_input = QLineEdit()
         self.time_input = QDoubleSpinBox()
-        self.time_input.setSuffix(" s")
         self.time_input.setDecimals(2)
         self.time_input.setMaximum(9999)
+        self.time_unit_selector = QComboBox()
+        self.time_unit_selector.addItems(["segundos", "minutos", "horas"])
         self.amount_input = QSpinBox()
         self.amount_input.setMinimum(1)
         self.amount_input.setMaximum(9999)
 
+        time_row = QHBoxLayout()
+        time_row.addWidget(self.time_input)
+        time_row.addWidget(self.time_unit_selector)
         form.addRow("Producto:", self.name_input)
-        form.addRow("Tiempo de fabricación:", self.time_input)
+        form.addRow("Tiempo de fabricación:", time_row)
         form.addRow("Cantidad producida:", self.amount_input)
-
         layout.addLayout(form)
 
         self.materials_layout = QVBoxLayout()
@@ -158,6 +161,11 @@ class RecipeEditorTab(QWidget):
     def save_recipe(self):
         name = self.name_input.text().strip()
         time = self.time_input.value()
+        unit = self.time_unit_selector.currentText()
+        if unit == "minutos":
+            time *= 60
+        elif unit == "horas":
+            time *= 3600
         amount = self.amount_input.value()
 
         if not name:
@@ -187,10 +195,18 @@ class RecipeEditorTab(QWidget):
             return
 
         self.name_input.setText(name)
-        self.time_input.setValue(recipe["time"])
+        total_seconds = recipe["time"]
+        if total_seconds % 3600 == 0:
+            self.time_input.setValue(total_seconds / 3600)
+            self.time_unit_selector.setCurrentText("horas")
+        elif total_seconds % 60 == 0:
+            self.time_input.setValue(total_seconds / 60)
+            self.time_unit_selector.setCurrentText("minutos")
+        else:
+            self.time_input.setValue(total_seconds)
+            self.time_unit_selector.setCurrentText("segundos")
         self.amount_input.setValue(recipe.get("amount", 1))
 
-        # Limpiar materiales actuales
         for i in reversed(range(self.materials_layout.count())):
             child = self.materials_layout.takeAt(i)
             while child.count():
@@ -245,6 +261,9 @@ class CalculatorTab(QWidget):
     def __init__(self, manager):
         super().__init__()
         self.manager = manager
+        self.unit_index = 1
+        self.unit_labels = ["seg", "min", "hora"]
+        self.unit_multipliers = [1/60, 1, 60]
         self.init_ui()
 
     def init_ui(self):
@@ -253,13 +272,18 @@ class CalculatorTab(QWidget):
 
         self.product_selector = QComboBox()
         self.rate_input = QDoubleSpinBox()
-        self.rate_input.setSuffix(" /min")
+        self.rate_input.setDecimals(2)
         self.rate_input.setMaximum(999999)
+        self.rate_unit_selector = QComboBox()
+        self.rate_unit_selector.addItems(["/seg", "/min", "/hora"])
 
+        rate_layout = QHBoxLayout()
+        rate_layout.addWidget(self.rate_input)
+        rate_layout.addWidget(self.rate_unit_selector)
         input_layout.addWidget(QLabel("Producto final:"))
         input_layout.addWidget(self.product_selector)
         input_layout.addWidget(QLabel("Tasa deseada:"))
-        input_layout.addWidget(self.rate_input)
+        input_layout.addLayout(rate_layout)
 
         calc_btn = QPushButton("Calcular")
         calc_btn.clicked.connect(self.calculate)
@@ -269,7 +293,8 @@ class CalculatorTab(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Producto", "Tipo", "Cantidad/min", "Prod/Máquina", "Máquinas"])
+        self.update_headers()
+        self.table.horizontalHeader().sectionClicked.connect(self.header_clicked)
         layout.addWidget(self.table)
 
         self.setLayout(layout)
@@ -282,10 +307,28 @@ class CalculatorTab(QWidget):
             self.product_selector.addItems(self.manager.recipes.keys())
             self.product_selector.setEnabled(True)
 
+    def update_headers(self):
+        labels = ["Producto", "Tipo",
+                f"Cantidad/{self.unit_labels[self.unit_index]}",
+                "Prod/Máquina", "Máquinas"]
+        self.table.setHorizontalHeaderLabels(labels)
+    
+    def header_clicked(self, index):
+        if index == 2:
+            self.unit_index = (self.unit_index + 1) % 3
+            self.update_headers()
+            self.calculate()
+
     def calculate(self):
         product = self.product_selector.currentText()
         rate = self.rate_input.value()
-        if not product or rate <= 0:
+        unit = self.rate_unit_selector.currentText()
+        if unit == "/seg":
+            rate *= 60
+        elif unit == "/hora":
+            rate /= 60
+
+        if not product:
             QMessageBox.warning(self, "Error", "Seleccione un producto y una tasa válida.")
             return
 
@@ -295,10 +338,11 @@ class CalculatorTab(QWidget):
         for row, (name, info) in enumerate(results.items()):
             self.table.setItem(row, 0, QTableWidgetItem(name))
             self.table.setItem(row, 1, QTableWidgetItem(info["type"]))
-            self.table.setItem(row, 2, QTableWidgetItem(f"{info['qty']:.2f}"))
+            mult = self.unit_multipliers[self.unit_index]
+            adjusted_qty = info['qty'] * mult
+            self.table.setItem(row, 2, QTableWidgetItem(f"{adjusted_qty:.2f}"))
             self.table.setItem(row, 3, QTableWidgetItem(f"{info['prod_per_machine']:.2f}"))
             self.table.setItem(row, 4, QTableWidgetItem(f"{info['machines_needed']:.2f}"))
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -324,7 +368,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         event.accept()
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
