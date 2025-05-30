@@ -1,196 +1,333 @@
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QComboBox, QSpinBox,
+    QDoubleSpinBox, QListWidget, QFileDialog, QTabWidget, QMessageBox, QFormLayout
+)
 import sys
 import json
-from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QListWidget, QSpinBox,
-    QListWidgetItem, QMessageBox, QFileDialog, QComboBox, QTextEdit
-)
+import os
 
-class RecipeEditor(QWidget):
+class RecipeManager:
     def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Editor y Calculador de Recetas de Crafteo")
         self.recipes = {}
-        self.current_recipe = None
+
+    def add_recipe(self, name, time, amount, materials):
+        self.recipes[name] = {
+            "time": time,
+            "amount": amount,
+            "materials": materials
+        }
+
+    def save_to_file(self, filepath):
+        with open(filepath, "w") as f:
+            json.dump(self.recipes, f, indent=2)
+
+    def load_from_file(self, filepath):
+        with open(filepath, "r") as f:
+            self.recipes = json.load(f)
+
+    def calculate_requirements(self, product, desired_rate_per_min):
+        requirements = {}
+
+        def helper(prod, rate_needed, final_call=False):
+            if prod not in self.recipes:
+                requirements[prod] = {
+                    "type": "base",
+                    "qty": requirements.get(prod, {}).get("qty", 0.0) + rate_needed,
+                    "prod_per_machine": 0,
+                    "machines_needed": 0
+                }
+                return
+
+            recipe = self.recipes[prod]
+            time = recipe["time"]
+            amount = recipe.get("amount", 1)
+            prod_per_machine = (60 / time) * amount
+            if prod not in requirements:
+                requirements[prod] = {
+                    "type": "final" if final_call else "intermedio",
+                    "qty": 0.0,
+                    "prod_per_machine": prod_per_machine,
+                    "machines_needed": 0
+                }
+
+            requirements[prod]["qty"] += rate_needed
+            requirements[prod]["machines_needed"] = requirements[prod]["qty"] / prod_per_machine
+
+            multiplier = rate_needed / amount
+            for mat, qty in recipe["materials"].items():
+                helper(mat, qty * multiplier)
+
+        helper(product, desired_rate_per_min, final_call=True)
+        return requirements
+
+class RecipeEditorTab(QWidget):
+    def __init__(self, manager):
+        super().__init__()
+        self.manager = manager
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
 
-        # Entrada del nombre del producto
-        self.product_input = QLineEdit()
-        layout.addWidget(QLabel("Producto"))
-        layout.addWidget(self.product_input)
+        form = QFormLayout()
+        self.name_input = QLineEdit()
+        self.time_input = QDoubleSpinBox()
+        self.time_input.setSuffix(" s")
+        self.time_input.setDecimals(2)
+        self.time_input.setMaximum(9999)
+        self.amount_input = QSpinBox()
+        self.amount_input.setMinimum(1)
+        self.amount_input.setMaximum(9999)
 
-        # Tiempo de fabricación
-        self.time_input = QSpinBox()
-        self.time_input.setRange(1, 100000)
-        layout.addWidget(QLabel("Tiempo de fabricación (segundos)"))
-        layout.addWidget(self.time_input)
+        form.addRow("Producto:", self.name_input)
+        form.addRow("Tiempo de fabricación:", self.time_input)
+        form.addRow("Cantidad producida:", self.amount_input)
 
-        # Lista de materiales
-        self.materials_list = QListWidget()
-        layout.addWidget(QLabel("Materiales (doble click para editar/eliminar)"))
-        layout.addWidget(self.materials_list)
+        layout.addLayout(form)
 
-        # Entrada de material nuevo
-        material_layout = QHBoxLayout()
-        self.material_name_input = QLineEdit()
-        self.material_qty_input = QSpinBox()
-        self.material_qty_input.setRange(1, 10000)
-        self.add_material_btn = QPushButton("Agregar Material")
-        self.add_material_btn.clicked.connect(self.add_material)
+        self.materials_layout = QVBoxLayout()
+        self.material_inputs = []
 
-        material_layout.addWidget(QLabel("Nombre"))
-        material_layout.addWidget(self.material_name_input)
-        material_layout.addWidget(QLabel("Cantidad"))
-        material_layout.addWidget(self.material_qty_input)
-        material_layout.addWidget(self.add_material_btn)
+        layout.addWidget(QLabel("Materiales:"))
+        layout.addLayout(self.materials_layout)
 
-        layout.addLayout(material_layout)
+        add_mat_button = QPushButton("Agregar material")
+        add_mat_button.clicked.connect(lambda: self.add_material_row())
+        layout.addWidget(add_mat_button)
 
-        # Botones de guardar receta
-        self.save_recipe_btn = QPushButton("Guardar/Actualizar Receta")
-        self.save_recipe_btn.clicked.connect(self.save_recipe)
-        layout.addWidget(self.save_recipe_btn)
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("Agregar receta")
+        edit_btn = QPushButton("Modificar receta")
+        delete_btn = QPushButton("Eliminar receta")
+        save_btn = QPushButton("Guardar JSON")
+        load_btn = QPushButton("Cargar JSON")
+        btn_layout.addWidget(add_btn)
+        btn_layout.addWidget(edit_btn)
+        btn_layout.addWidget(delete_btn)
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(load_btn)
+        add_btn.clicked.connect(self.save_recipe)
+        edit_btn.clicked.connect(self.load_selected_recipe)
+        delete_btn.clicked.connect(self.delete_selected_recipe)
+        save_btn.clicked.connect(self.save_json)
+        load_btn.clicked.connect(self.load_json)
 
-        # Lista de recetas
+
+        layout.addLayout(btn_layout)
+
         self.recipe_list = QListWidget()
-        self.recipe_list.itemClicked.connect(self.load_recipe)
-        layout.addWidget(QLabel("Recetas guardadas"))
+        layout.addWidget(QLabel("Recetas existentes:"))
         layout.addWidget(self.recipe_list)
-
-        # Botones para guardar/cargar JSON
-        file_buttons = QHBoxLayout()
-        self.load_btn = QPushButton("Cargar JSON")
-        self.load_btn.clicked.connect(self.load_from_json)
-        self.save_btn = QPushButton("Guardar JSON")
-        self.save_btn.clicked.connect(self.save_to_json)
-        file_buttons.addWidget(self.load_btn)
-        file_buttons.addWidget(self.save_btn)
-        layout.addLayout(file_buttons)
-
-        # Calculadora de producción
-        layout.addWidget(QLabel("\n📦 Calculadora de Producción"))
-        self.calc_product_selector = QComboBox()
-        self.calc_rate_input = QSpinBox()
-        self.calc_rate_input.setRange(1, 10000)
-        self.calc_rate_input.setValue(1)
-        self.calc_btn = QPushButton("Calcular materiales base")
-        self.calc_btn.clicked.connect(self.calculate_resources)
-        self.calc_output = QTextEdit()
-        self.calc_output.setReadOnly(True)
-
-        calc_layout = QHBoxLayout()
-        calc_layout.addWidget(QLabel("Producto:"))
-        calc_layout.addWidget(self.calc_product_selector)
-        calc_layout.addWidget(QLabel("/min"))
-        calc_layout.addWidget(self.calc_rate_input)
-        calc_layout.addWidget(self.calc_btn)
-
-        layout.addLayout(calc_layout)
-        layout.addWidget(self.calc_output)
 
         self.setLayout(layout)
 
-        # Eventos extra
-        self.materials_list.itemDoubleClicked.connect(self.remove_material)
+    def add_material_row(self, mat_name="", qty=0):
+        row = QHBoxLayout()
+        mat_input = QLineEdit()
+        qty_input = QDoubleSpinBox()
+        qty_input.setMaximum(9999)
+        mat_input.setText(mat_name)
+        qty_input.setValue(qty)
 
-    def add_material(self):
-        name = self.material_name_input.text().strip()
-        qty = self.material_qty_input.value()
-        if name:
-            self.materials_list.addItem(f"{name} x{qty}")
-            self.material_name_input.clear()
-            self.material_qty_input.setValue(1)
+        remove_btn = QPushButton("🗑")
+        remove_btn.setFixedWidth(30)
 
-    def remove_material(self, item):
-        reply = QMessageBox.question(self, 'Eliminar Material',
-                                     f"¿Eliminar '{item.text()}'?", QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            row = self.materials_list.row(item)
-            self.materials_list.takeItem(row)
+        def remove():
+            for i in range(self.materials_layout.count()):
+                if self.materials_layout.itemAt(i).layout() == row:
+                    for j in reversed(range(row.count())):
+                        widget = row.itemAt(j).widget()
+                        if widget:
+                            widget.deleteLater()
+                    self.materials_layout.removeItem(row)
+                    self.material_inputs.pop(i)
+                    break
 
+        remove_btn.clicked.connect(remove)
+
+        row.addWidget(QLabel("Material:"))
+        row.addWidget(mat_input)
+        row.addWidget(QLabel("Cantidad:"))
+        row.addWidget(qty_input)
+        row.addWidget(remove_btn)
+
+        self.materials_layout.addLayout(row)
+        self.material_inputs.append((mat_input, qty_input, remove_btn))
+    
     def save_recipe(self):
-        product = self.product_input.text().strip()
+        name = self.name_input.text().strip()
         time = self.time_input.value()
-        if not product:
-            QMessageBox.warning(self, "Error", "Nombre de producto vacío.")
+        amount = self.amount_input.value()
+
+        if not name:
+            QMessageBox.warning(self, "Error", "El nombre del producto no puede estar vacío.")
             return
 
         materials = {}
-        for i in range(self.materials_list.count()):
-            text = self.materials_list.item(i).text()
-            name, qty = text.split(" x")
-            materials[name.strip()] = int(qty)
+        for mat_input, qty_input, _ in self.material_inputs:
+            mat = mat_input.text().strip()
+            qty = qty_input.value()
+            if mat:
+                materials[mat] = qty
 
-        self.recipes[product] = {
-            "time": time,
-            "materials": materials
-        }
+        self.manager.add_recipe(name, time, amount, materials)
         self.refresh_recipe_list()
-        QMessageBox.information(self, "Guardado", f"Receta '{product}' guardada correctamente.")
+        self.clear_inputs()
 
-    def load_recipe(self, item):
-        product = item.text()
-        self.product_input.setText(product)
-        self.time_input.setValue(self.recipes[product]["time"])
-        self.materials_list.clear()
-        for mat, qty in self.recipes[product]["materials"].items():
-            self.materials_list.addItem(f"{mat} x{qty}")
+    def load_selected_recipe(self):
+        selected = self.recipe_list.currentItem()
+        if not selected:
+            QMessageBox.warning(self, "Error", "Seleccioná una receta de la lista.")
+            return
 
+        name = selected.text()
+        recipe = self.manager.recipes.get(name)
+        if not recipe:
+            return
+
+        self.name_input.setText(name)
+        self.time_input.setValue(recipe["time"])
+        self.amount_input.setValue(recipe.get("amount", 1))
+
+        # Limpiar materiales actuales
+        for i in reversed(range(self.materials_layout.count())):
+            child = self.materials_layout.takeAt(i)
+            while child.count():
+                widget = child.takeAt(0).widget()
+                if widget:
+                    widget.deleteLater()
+
+        self.material_inputs.clear()
+
+        for mat, qty in recipe["materials"].items():
+            self.add_material_row(mat, qty)
+    
+    def delete_selected_recipe(self):
+        selected = self.recipe_list.currentItem()
+        if not selected:
+            return
+        name = selected.text()
+        confirm = QMessageBox.question(self, "Confirmar", f"¿Eliminar receta '{name}'?", QMessageBox.Yes | QMessageBox.No)
+        if confirm == QMessageBox.Yes:
+            del self.manager.recipes[name]
+            self.refresh_recipe_list()
+
+    def save_json(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Guardar archivo de recetas", "", "JSON files (*.json)")
+        if path:
+            self.manager.save_to_file(path)
+
+    def load_json(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Cargar archivo de recetas", "", "JSON files (*.json)")
+        if path:
+            self.manager.load_from_file(path)
+            self.refresh_recipe_list()
+
+    def clear_inputs(self):
+        self.name_input.clear()
+        self.time_input.setValue(0)
+        self.amount_input.setValue(1)
+        for layout in self.materials_layout.children():
+            if isinstance(layout, QHBoxLayout):
+                while layout.count():
+                    w = layout.takeAt(0).widget()
+                    if w:
+                        w.deleteLater()
+        self.material_inputs.clear()
+    
     def refresh_recipe_list(self):
         self.recipe_list.clear()
-        self.calc_product_selector.clear()
-        for recipe in sorted(self.recipes):
-            self.recipe_list.addItem(recipe)
-            self.calc_product_selector.addItem(recipe)
+        for r in self.manager.recipes:
+            self.recipe_list.addItem(r)
 
-    def save_to_json(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Guardar como", filter="JSON (*.json)")
-        if path:
-            with open(path, 'w') as f:
-                json.dump(self.recipes, f, indent=2)
-            QMessageBox.information(self, "Guardado", "Archivo JSON guardado correctamente.")
+class CalculatorTab(QWidget):
+    def __init__(self, manager):
+        super().__init__()
+        self.manager = manager
+        self.init_ui()
 
-    def load_from_json(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Cargar archivo", filter="JSON (*.json)")
-        if path:
-            with open(path, 'r') as f:
-                self.recipes = json.load(f)
-            self.refresh_recipe_list()
-            QMessageBox.information(self, "Cargado", "Archivo JSON cargado correctamente.")
+    def init_ui(self):
+        layout = QVBoxLayout()
+        input_layout = QHBoxLayout()
 
-    def calculate_resources(self):
-        product = self.calc_product_selector.currentText()
-        rate_per_minute = self.calc_rate_input.value()
+        self.product_selector = QComboBox()
+        self.rate_input = QDoubleSpinBox()
+        self.rate_input.setSuffix(" /min")
+        self.rate_input.setMaximum(999999)
 
-        def resolve_tree(prod, amount_per_min):
-            if prod not in self.recipes:
-                return {prod: amount_per_min}  # recurso base
+        input_layout.addWidget(QLabel("Producto final:"))
+        input_layout.addWidget(self.product_selector)
+        input_layout.addWidget(QLabel("Tasa deseada:"))
+        input_layout.addWidget(self.rate_input)
 
-            recipe = self.recipes[prod]
-            output_per_cycle = 1
-            time_per_cycle = recipe["time"] / 60  # a minutos
-            cycles_per_min = amount_per_min / output_per_cycle
+        calc_btn = QPushButton("Calcular")
+        calc_btn.clicked.connect(self.calculate)
 
-            total = {}
-            for mat, qty in recipe["materials"].items():
-                sub_needed = qty * cycles_per_min
-                sub_tree = resolve_tree(mat, sub_needed)
-                for k, v in sub_tree.items():
-                    total[k] = total.get(k, 0) + v
-            return total
+        layout.addLayout(input_layout)
+        layout.addWidget(calc_btn)
 
-        result = resolve_tree(product, rate_per_minute)
-        output = f"Para producir {rate_per_minute} {product}/min se necesita:\n"
-        for mat, qty in sorted(result.items()):
-            output += f"- {qty:.2f} {mat}/min\n"
-        self.calc_output.setPlainText(output)
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Producto", "Tipo", "Cantidad/min", "Prod/Máquina", "Máquinas"])
+        layout.addWidget(self.table)
 
-if __name__ == '__main__':
+        self.setLayout(layout)
+
+    def refresh_product_list(self):
+        self.product_selector.clear()
+        if not self.manager.recipes:
+            self.product_selector.setEnabled(False)
+        else:
+            self.product_selector.addItems(self.manager.recipes.keys())
+            self.product_selector.setEnabled(True)
+
+    def calculate(self):
+        product = self.product_selector.currentText()
+        rate = self.rate_input.value()
+        if not product or rate <= 0:
+            QMessageBox.warning(self, "Error", "Seleccione un producto y una tasa válida.")
+            return
+
+        results = self.manager.calculate_requirements(product, rate)
+
+        self.table.setRowCount(len(results))
+        for row, (name, info) in enumerate(results.items()):
+            self.table.setItem(row, 0, QTableWidgetItem(name))
+            self.table.setItem(row, 1, QTableWidgetItem(info["type"]))
+            self.table.setItem(row, 2, QTableWidgetItem(f"{info['qty']:.2f}"))
+            self.table.setItem(row, 3, QTableWidgetItem(f"{info['prod_per_machine']:.2f}"))
+            self.table.setItem(row, 4, QTableWidgetItem(f"{info['machines_needed']:.2f}"))
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("🧱 Calculadora de crafteo universal")
+        self.resize(800, 600)
+
+        self.manager = RecipeManager()
+
+        self.tabs = QTabWidget()
+        self.tab_editor = RecipeEditorTab(self.manager)
+        self.tab_calculator = CalculatorTab(self.manager)
+
+        self.tabs.addTab(self.tab_editor, "📦 Recetas")
+        self.tabs.addTab(self.tab_calculator, "🧮 Calculadora")
+
+        self.setCentralWidget(self.tabs)
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+
+    def on_tab_changed(self, index):
+        if self.tabs.widget(index) == self.tab_calculator:
+            self.tab_calculator.refresh_product_list()
+
+    def closeEvent(self, event):
+        event.accept()
+
+
+if __name__ == "__main__":
     app = QApplication(sys.argv)
-    win = RecipeEditor()
-    win.resize(700, 700)
-    win.show()
+    window = MainWindow()
+    window.show()
     sys.exit(app.exec_())
