@@ -5,17 +5,18 @@ from PyQt5.QtWidgets import (
 )
 import sys
 import json
-import os
 
 class RecipeManager:
     def __init__(self):
         self.recipes = {}
 
-    def add_recipe(self, name, time, amount, materials):
+    def add_recipe(self, name, time, amount, materials, byproducts=None, machine=None):
         self.recipes[name] = {
             "time": time,
             "amount": amount,
-            "materials": materials
+            "materials": materials,
+            "byproducts": byproducts or {},
+            "machine": machine or ""
         }
 
     def save_to_file(self, filepath):
@@ -72,32 +73,31 @@ class RecipeEditorTab(QWidget):
 
         form = QFormLayout()
         self.name_input = QLineEdit()
+        self.machine_input = QLineEdit()
         self.time_input = QDoubleSpinBox()
         self.time_input.setDecimals(2)
         self.time_input.setMaximum(9999)
         self.time_unit_selector = QComboBox()
         self.time_unit_selector.addItems(["segundos", "minutos", "horas"])
-        self.amount_input = QSpinBox()
-        self.amount_input.setMinimum(1)
-        self.amount_input.setMaximum(9999)
-
         time_row = QHBoxLayout()
         time_row.addWidget(self.time_input)
         time_row.addWidget(self.time_unit_selector)
+        self.amount_input = QSpinBox()
+        self.amount_input.setMinimum(1)
+        self.amount_input.setMaximum(9999)
         form.addRow("Producto:", self.name_input)
+        form.addRow("Máquina:", self.machine_input)
         form.addRow("Tiempo de fabricación:", time_row)
         form.addRow("Cantidad producida:", self.amount_input)
-        layout.addLayout(form)
 
         self.materials_layout = QVBoxLayout()
         self.material_inputs = []
-
-        layout.addWidget(QLabel("Materiales:"))
-        layout.addLayout(self.materials_layout)
-
         add_mat_button = QPushButton("Agregar material")
         add_mat_button.clicked.connect(lambda: self.add_material_row())
-        layout.addWidget(add_mat_button)
+        self.byproducts_layout = QVBoxLayout()
+        self.byproduct_inputs = []
+        add_byp_button = QPushButton("Agregar producto secundario")
+        add_byp_button.clicked.connect(lambda: self.add_byproduct_row())
 
         btn_layout = QHBoxLayout()
         add_btn = QPushButton("Agregar receta")
@@ -116,13 +116,17 @@ class RecipeEditorTab(QWidget):
         save_btn.clicked.connect(self.save_json)
         load_btn.clicked.connect(self.load_json)
 
-
-        layout.addLayout(btn_layout)
-
         self.recipe_list = QListWidget()
+        layout.addLayout(form)
+        layout.addWidget(QLabel("Materiales:"))
+        layout.addLayout(self.materials_layout)
+        layout.addWidget(add_mat_button)
+        layout.addWidget(QLabel("Productos secundarios:"))
+        layout.addLayout(self.byproducts_layout)
+        layout.addWidget(add_byp_button)
+        layout.addLayout(btn_layout)
         layout.addWidget(QLabel("Recetas existentes:"))
         layout.addWidget(self.recipe_list)
-
         self.setLayout(layout)
 
     def add_material_row(self, mat_name="", qty=0):
@@ -158,6 +162,39 @@ class RecipeEditorTab(QWidget):
         self.materials_layout.addLayout(row)
         self.material_inputs.append((mat_input, qty_input, remove_btn))
     
+    def add_byproduct_row(self, name="", qty=0):
+        row = QHBoxLayout()
+        name_input = QLineEdit()
+        qty_input = QDoubleSpinBox()
+        qty_input.setMaximum(9999)
+        name_input.setText(name)
+        qty_input.setValue(qty)
+
+        remove_btn = QPushButton("🗑")
+        remove_btn.setFixedWidth(30)
+
+        def remove():
+            for i in range(self.byproducts_layout.count()):
+                if self.byproducts_layout.itemAt(i).layout() == row:
+                    for j in reversed(range(row.count())):
+                        widget = row.itemAt(j).widget()
+                        if widget:
+                            widget.deleteLater()
+                    self.byproducts_layout.removeItem(row)
+                    self.byproduct_inputs.pop(i)
+                    break
+
+        remove_btn.clicked.connect(remove)
+
+        row.addWidget(QLabel("Producto:"))
+        row.addWidget(name_input)
+        row.addWidget(QLabel("Cantidad:"))
+        row.addWidget(qty_input)
+        row.addWidget(remove_btn)
+
+        self.byproducts_layout.addLayout(row)
+        self.byproduct_inputs.append((name_input, qty_input, remove_btn))
+
     def save_recipe(self):
         name = self.name_input.text().strip()
         time = self.time_input.value()
@@ -179,7 +216,15 @@ class RecipeEditorTab(QWidget):
             if mat:
                 materials[mat] = qty
 
-        self.manager.add_recipe(name, time, amount, materials)
+        byproducts = {}
+        for name_input, qty_input, _ in self.byproduct_inputs:
+            name = name_input.text().strip()
+            qty = qty_input.value()
+            if name:
+                byproducts[name] = qty
+
+        machine = self.machine_input.text().strip()
+        self.manager.add_recipe(name, time, amount, materials, byproducts, machine)
         self.refresh_recipe_list()
         self.clear_inputs()
 
@@ -206,6 +251,19 @@ class RecipeEditorTab(QWidget):
             self.time_input.setValue(total_seconds)
             self.time_unit_selector.setCurrentText("segundos")
         self.amount_input.setValue(recipe.get("amount", 1))
+
+        self.machine_input.setText(recipe.get("machine", ""))
+
+        for i in reversed(range(self.byproducts_layout.count())):
+            child = self.byproducts_layout.takeAt(i)
+            while child.count():
+                widget = child.takeAt(0).widget()
+                if widget:
+                    widget.deleteLater()
+        self.byproduct_inputs.clear()
+
+        for name, qty in recipe.get("byproducts", {}).items():
+            self.add_byproduct_row(name, qty)
 
         for i in reversed(range(self.materials_layout.count())):
             child = self.materials_layout.takeAt(i)
@@ -242,6 +300,7 @@ class RecipeEditorTab(QWidget):
 
     def clear_inputs(self):
         self.name_input.clear()
+        self.machine_input.clear()
         self.time_input.setValue(0)
         self.amount_input.setValue(1)
         for layout in self.materials_layout.children():
@@ -251,6 +310,14 @@ class RecipeEditorTab(QWidget):
                     if w:
                         w.deleteLater()
         self.material_inputs.clear()
+        for layout in self.byproducts_layout.children():
+            if isinstance(layout, QHBoxLayout):
+                while layout.count():
+                    w = layout.takeAt(0).widget()
+                    if w:
+                        w.deleteLater()
+        self.byproduct_inputs.clear()
+
     
     def refresh_recipe_list(self):
         self.recipe_list.clear()
