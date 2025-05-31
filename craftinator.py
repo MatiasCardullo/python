@@ -36,28 +36,44 @@ class RecipeManager:
                     "type": "base",
                     "qty": requirements.get(prod, {}).get("qty", 0.0) + rate_needed,
                     "prod_per_machine": 0,
-                    "machines_needed": 0
+                    "machines_needed": 0,
+                    "machine": ""
                 }
                 return
 
             recipe = self.recipes[prod]
             time = recipe["time"]
             amount = recipe.get("amount", 1)
+            machine = recipe.get("machine", "")
             prod_per_machine = (60 / time) * amount
+
             if prod not in requirements:
                 requirements[prod] = {
                     "type": "final" if final_call else "intermedio",
                     "qty": 0.0,
                     "prod_per_machine": prod_per_machine,
-                    "machines_needed": 0
+                    "machines_needed": 0,
+                    "machine": machine
                 }
 
             requirements[prod]["qty"] += rate_needed
             requirements[prod]["machines_needed"] = requirements[prod]["qty"] / prod_per_machine
 
             multiplier = rate_needed / amount
+
             for mat, qty in recipe["materials"].items():
                 helper(mat, qty * multiplier)
+
+            for byp, qty in recipe.get("byproducts", {}).items():
+                if byp not in requirements:
+                    requirements[byp] = {
+                        "type": "secundario",
+                        "qty": 0.0,
+                        "prod_per_machine": (60 / time) * qty,
+                        "machines_needed": 0,  # no se necesita máquina extra
+                        "machine": machine
+                    }
+                requirements[byp]["qty"] += (qty * multiplier)
 
         helper(product, desired_rate_per_min, final_call=True)
         return requirements
@@ -409,7 +425,7 @@ class CalculatorTab(QWidget):
             adjusted_qty = info['qty'] * mult
             self.table.setItem(row, 2, QTableWidgetItem(f"{adjusted_qty:.2f}"))
             self.table.setItem(row, 3, QTableWidgetItem(f"{info['prod_per_machine']:.2f}"))
-            self.table.setItem(row, 4, QTableWidgetItem(f"{info['machines_needed']:.2f}"))
+            self.table.setItem(row, 4, QTableWidgetItem(f"{info['machines_needed']:.2f} "+info.get("machine", "")))
 
 class MainWindow(QMainWindow):
     def __init__(self):
