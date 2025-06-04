@@ -1,37 +1,58 @@
 import os, tempfile, urllib.request, sys
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QScrollArea, QFrame, QPushButton, QTabWidget
+    QScrollArea, QFrame, QPushButton, QTabWidget, QDialog
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtCore import QUrl, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QUrl, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from bs4 import BeautifulSoup
 
 class PostWidget(QFrame):
-    def __init__(self, top, text, images):
+    def __init__(self, data):
         super().__init__()
         self.setFrameShape(QFrame.Box)
         #self.setStyleSheet("padding: 5px; margin: 5px;")
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(top))
-        layout.addWidget(QLabel(text))
-        if images:
+        layout.addWidget(QLabel(f"<b>{data['user']}</b> {data['handle']} - {data['time']}"))
+        layout.addWidget(QLabel(f"{data['text']}\n\n🔗 {data['url']}\n📊 {data['stats']}"))
+        if data['images']:
             img_row = QHBoxLayout()
-            for img_url in images:
+            for img_url in data['images']:
                 try:
                     base_name = os.path.basename(img_url.split("?")[0])
                     safe_name = urllib.parse.quote(base_name, safe='')
                     temp_path = os.path.join(tempfile.gettempdir(), safe_name)
                     if not os.path.exists(temp_path):
                         urllib.request.urlretrieve(img_url, temp_path)
-                    img_label = QLabel()
+                    img_label = ClickableLabel()
                     pixmap = QPixmap(temp_path).scaledToWidth(150)
                     img_label.setPixmap(pixmap)
+                    img_label.clicked.connect(lambda path=temp_path: ImageDialog(path).exec_())
                     img_row.addWidget(img_label)
                 except Exception as e:
                     print(f"Error al cargar imagen: {e}")
             layout.addLayout(img_row)
+        self.setLayout(layout)
+
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal()
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+
+class ImageDialog(QDialog):
+    def __init__(self, image_path):
+        super().__init__()
+        self.setWindowTitle("Imagen ampliada")
+        self.setMinimumSize(600, 400)
+
+        layout = QVBoxLayout()
+        label = QLabel()
+        label.setAlignment(Qt.AlignCenter)
+        pixmap = QPixmap(image_path).scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        label.setPixmap(pixmap)
+
+        layout.addWidget(label)
         self.setLayout(layout)
 
 class MainWindow(QWidget):
@@ -74,6 +95,7 @@ class MainWindow(QWidget):
 
         self.browser = QWebEngineView()
         self.browser.load(QUrl("https://x.com/i/lists/1894498544729636869"))
+        self.browser.setZoomFactor(0.25)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(center_widget, "📰 Feed")
@@ -122,12 +144,19 @@ class MainWindow(QWidget):
                 # Estadísticas del tweet
                 stats_div = tweet.find("div", attrs={"role": "group"})
                 stats = stats_div.get("aria-label", "") if stats_div else ""
-                full_text = f"{text}\n\n🔗 {tweet_url}\n📊 {stats}"
-                post = PostWidget(f"<b>{user}</b> {handle} - {time}", full_text, images)
+                tweet_data = {
+                    "user": user,
+                    "handle": handle,
+                    "text": text,
+                    "time": time,
+                    "url": tweet_url,
+                    "stats": stats,
+                    "images": images,
+                }
+                post = PostWidget(tweet_data)
 
                 self.feed_layout.addWidget(post)
         self.browser.page().toHtml(handle_html)
-
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
