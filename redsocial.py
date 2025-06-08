@@ -1,4 +1,5 @@
 import os, tempfile, urllib.request, sys
+import webbrowser
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QScrollArea, QFrame, QPushButton, QTabWidget, QDialog, QFileDialog
@@ -8,15 +9,43 @@ from PyQt5.QtCore import Qt, QUrl, QTimer, QThread, QObject, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from bluesky import BlueskyClient
+
+def calidad_bluesky(url):
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "name" in qs:
+        qs["name"] = [size]
+        new_query = urlencode(qs, doseq=True)
+        parsed = parsed._replace(query=new_query)
+        return urlunparse(parsed)
+    return url
+
+def calidad_twitter(url,size):
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "name" in qs:
+        qs["name"] = [size]
+        new_query = urlencode(qs, doseq=True)
+        parsed = parsed._replace(query=new_query)
+        return urlunparse(parsed)
+    return url
 
 class PostWidget(QFrame):
     def __init__(self, data):
         super().__init__()
+        source = data.get('source', '')
         self.setFrameShape(QFrame.Box)
         #self.setStyleSheet("padding: 5px; margin: 5px;")
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"<b>{data['user']}</b> {data['handle']} - {data['time']} {data.get('source', '')}"))
-        layout.addWidget(QLabel(f"{data['text']}\n\n🔗 {data['url']}\n📊 {data['stats']}"))
+        link_button = QPushButton(source + " link")
+        link_button.clicked.connect(lambda: webbrowser.open(data['url']))
+        layout.addWidget(link_button)
+        layout.addWidget(QLabel(f"""<b>{data['user']}</b> 
+                                {data['handle']} - 
+                                {data['time']} 
+                                {source}"""))
+        layout.addWidget(QLabel(f"""{data['text']}\n\n📊 {data['stats']}"""))
         if data['images']:
             img_row = QHBoxLayout()
             for img_url in data['images']:
@@ -25,7 +54,7 @@ class PostWidget(QFrame):
                     safe_name = urllib.parse.quote(base_name, safe='')
                     temp_path = os.path.join(tempfile.gettempdir(), safe_name)
                     if not os.path.exists(temp_path):
-                        urllib.request.urlretrieve(img_url, temp_path)
+                        urllib.request.urlretrieve(calidad_twitter(img_url,"360x360"), temp_path)
                     img_label = ClickableLabel()
                     pixmap = QPixmap(temp_path)
                     img_label.setPixmap(pixmap)
@@ -44,25 +73,16 @@ class ClickableLabel(QLabel):
 class ImageLoader(QObject):
     finished = pyqtSignal(QPixmap)
     failed = pyqtSignal(str)
-
     def __init__(self, url):
         super().__init__()
         self.url = url
-
     def run(self):
         try:
             base_name = os.path.basename(self.url.split("?")[0])
             safe_name = urllib.parse.quote(base_name, safe='')
             temp_path = os.path.join(tempfile.gettempdir(), "large_" + safe_name)
             if not os.path.exists(temp_path):
-                def mejorar_calidad(url):
-                    parsed = urlparse(url)
-                    qs = parse_qs(parsed.query)
-                    qs["name"] = ["large"]
-                    new_query = urlencode(qs, doseq=True)
-                    parsed = parsed._replace(query=new_query)
-                    return urlunparse(parsed)
-                url_mejorado = mejorar_calidad(self.url)
+                url_mejorado = calidad_twitter(self.url,"large")
                 urllib.request.urlretrieve(url_mejorado, temp_path)
             pixmap = QPixmap(temp_path)
             self.finished.emit(pixmap)
@@ -142,12 +162,19 @@ class MainWindow(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.feed_container)
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self.check_scroll_position)
 
-        self.refresh_btn = QPushButton("📥 Cargar Tweets")
-        self.refresh_btn.clicked.connect(self.scrapear_tweets)
+        self.refresh_twt_btn = QPushButton("📥 Cargar Tweets")
+        self.refresh_twt_btn.clicked.connect(self.scrapear_tweets)
+        self.refresh_bs_btn = QPushButton("🌤️ Cargar Bluesky")
+        self.refresh_bs_btn.clicked.connect(self.obtener_posts_bluesky)
+        self.bluesky_client = BlueskyClient()
 
         center_layout = QVBoxLayout()
-        center_layout.addWidget(self.refresh_btn)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.refresh_twt_btn)
+        buttons.addWidget(self.refresh_bs_btn)
+        center_layout.addLayout(buttons)
         center_layout.addWidget(self.scroll_area)
 
         center_widget = QWidget()
@@ -167,35 +194,27 @@ class MainWindow(QWidget):
         self.browser_misskey.setZoomFactor(0.25)
         self.tabs.addTab(self.browser_misskey, "🌟 Misskey")
 
-        self.browser_bluesky = QWebEngineView()
-        self.browser_bluesky.load(QUrl("https://bsky.app/"))
-        self.browser_bluesky.setZoomFactor(0.25)
-        self.tabs.addTab(self.browser_bluesky, "🌤 Bluesky")
-
         main_layout.addWidget(menu_widget)
         main_layout.addWidget(center_widget, stretch=1)
         main_layout.addWidget(self.tabs)
 
+    def check_scroll_position(self):
+        scrollbar = self.scroll_area.verticalScrollBar()
+        value = scrollbar.value()
+        maximum = scrollbar.maximum()
+
+        threshold = 200  # px antes del fondo
+        if value >= maximum - threshold:
+            print("🔻 Scroll cerca del final, podés cargar más contenido.")
+    
     def scrapear_tweets(self):
         QTimer.singleShot(15000, self.obtener_twitter)
 
     def obtener_twitter(self):
-        def mejorar_calidad(url):
-            parsed = urlparse(url)
-            qs = parse_qs(parsed.query)
-            if 'name' in qs:
-                qs['name'] = ['360x360']
-                new_query = urlencode(qs, doseq=True)
-                parsed = parsed._replace(query=new_query)
-                return urlunparse(parsed)
-            return url
-
         def handle_html(html):
             soup = BeautifulSoup(html, "html.parser")
-
             tweets = soup.find_all("article", attrs={"data-testid": "tweet"})
             print(f"Tweets encontrados: {len(tweets)}")
-
             for tweet in tweets:
                 user_block = tweet.find("div", attrs={"data-testid": "User-Name"})
                 if not user_block:
@@ -205,20 +224,17 @@ class MainWindow(QWidget):
                 handle = spans[3].get_text(strip=True) if len(spans) > 3 else "@handle"
                 datetime = user_block.find('time')
                 time = datetime.text if datetime else "(sin hora)"
-                tweet_url = datetime.find_parent('a')['href'] if datetime else "#"
-
+                tweet_url = "https://x.com"+datetime.find_parent('a')['href'] if datetime else "#"
                 if tweet_url in self.tweet_urls:
                     continue
                 self.tweet_urls.add(tweet_url)
-
                 text_elem = tweet.find("div", {"data-testid": "tweetText"})
-                text = text_elem.get_text(" ", strip=True) if text_elem else "(sin texto)"
+                text = text_elem.get_text(" ", strip=True) if text_elem else ""
                 images = []
                 for img_tag in tweet.find_all("img"):
                     src = img_tag.get("src")
                     if src and "profile_images" not in src and ".svg" not in src:
-                        #print(src)
-                        images.append(mejorar_calidad(src))
+                        images.append(src)
                 stats_div = tweet.find("div", attrs={"role": "group"})
                 stats = stats_div.get("aria-label", "") if stats_div else ""
                 tweet_data = {
@@ -232,18 +248,24 @@ class MainWindow(QWidget):
                     "images": images,
                 }
                 post = PostWidget(tweet_data)
-
                 self.feed_layout.addWidget(post)
-
         self.browser_twitter.page().toHtml(handle_html)
 
+    def obtener_posts_bluesky(self):
+        timeline = self.bluesky_client.get_timeline()
+        posts = self.bluesky_client.get_posts_data(timeline)
+        for post_data in posts:
+            # Verifica si la URL ya está cargada
+            if not any(post_data["url"] in self.feed_layout.itemAt(i).widget().findChild(QLabel).text()
+                    for i in range(self.feed_layout.count())):
+                widget = PostWidget(post_data)
+                self.feed_layout.addWidget(widget)
+    
     def closeEvent(self, event):
         self.browser_twitter.page().profile().clearHttpCache()
         self.browser_twitter.page().profile().deleteLater()
         self.browser_misskey.page().profile().clearHttpCache()
         self.browser_misskey.page().profile().deleteLater()
-        self.browser_bluesky.page().profile().clearHttpCache()
-        self.browser_bluesky.page().profile().deleteLater()
         event.accept()
 
 if __name__ == '__main__':
