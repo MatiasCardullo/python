@@ -1,13 +1,9 @@
-import os
-import json
-import requests
-import keyring
+import os, json, requests, keyring, sys
 from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QDialog, QApplication
 )
 from PyQt5.QtCore import Qt
 from appdirs import user_data_dir
-import sys
 
 CONFIG_FILE = os.path.join(user_data_dir("RedSocial", "IARA"), "config.json")
 SERVICE_NAME = "Bluesky"
@@ -175,7 +171,7 @@ class BlueskyClient:
                 "text": text,
                 "time": post_data.get("indexedAt", "")[:16].replace("T", " "),
                 "url": post_url,
-                "stats": "",  # Bluesky aún no tiene stats públicas en timeline
+                "stats": "",
                 "images": images,
                 "source": "🌤️ Bluesky"
             })
