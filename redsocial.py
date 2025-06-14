@@ -196,6 +196,8 @@ class MainWindow(QWidget):
         main_layout.addWidget(menu_widget)
         main_layout.addWidget(center_widget, stretch=1)
         main_layout.addWidget(self.tabs)
+        
+        self.showMaximized()
 
     def reset_scroll_cooldown(self):
         self.scroll_cooldown = False
@@ -213,18 +215,16 @@ class MainWindow(QWidget):
             #print("🔻 Scroll cerca del final, cargando más contenido...")
             self.scroll_cooldown = True
             QTimer.singleShot(15000, self.reset_scroll_cooldown)
-            js_scroll = f"""
+            js_scroll = """(function() {
                 const current = window.scrollY;
                 const visible = window.innerHeight;
                 const total = document.body.scrollHeight;
-
                 const remaining = total - current - visible;
                 const nextScroll = current + remaining / 3;
-
                 window.scrollTo(0, nextScroll);
+                })();
             """
             self.browser_twitter.page().runJavaScript(js_scroll)
-            self.scroll_depth_ratio += (1 - self.scroll_depth_ratio) / 5
             self.scrapear_tweets()
     
     def scrapear_tweets(self):
@@ -291,6 +291,7 @@ class MainWindow(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    app.setStyle("WindowsVista")
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
